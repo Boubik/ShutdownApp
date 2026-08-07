@@ -149,11 +149,11 @@ internal static class PopupWindowManager
         IntPtr window);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr SetFocus(
-        IntPtr window);
+    private static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
+    private static extern IntPtr SetFocus(
+        IntPtr window);
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
