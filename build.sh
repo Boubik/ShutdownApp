@@ -6,6 +6,7 @@ SOLUTION_PATH="$SCRIPT_DIR/IdleShutdown.sln"
 SERVICE_PROJECT="$SCRIPT_DIR/src/IdleShutdown.Service/IdleShutdown.Service.csproj"
 AGENT_PROJECT="$SCRIPT_DIR/src/IdleShutdown.Agent/IdleShutdown.Agent.csproj"
 PACKAGE_PROJECT="$SCRIPT_DIR/packaging/idle-shutdown/IdleShutdown.Package.csproj"
+LOGIC_TEST_PROJECT="$SCRIPT_DIR/tests/IdleShutdown.LogicTests/IdleShutdown.LogicTests.csproj"
 DIST_DIR="$SCRIPT_DIR/dist"
 SERVICE_OUTPUT="$DIST_DIR/Service"
 AGENT_OUTPUT="$DIST_DIR/Agent"
@@ -23,6 +24,9 @@ if ! command -v "$DOTNET_COMMAND" >/dev/null 2>&1; then
 fi
 
 echo "[INFO] Používám .NET SDK: $("$DOTNET_COMMAND" --version)"
+echo "[INFO] Spouštím testy časování a resetů aktivity..."
+"$DOTNET_COMMAND" run --project "$LOGIC_TEST_PROJECT" -c Release
+
 echo "[INFO] Čistím předchozí aplikační build..."
 rm -rf -- "$SERVICE_OUTPUT" "$AGENT_OUTPUT"
 mkdir -p -- "$SERVICE_OUTPUT" "$AGENT_OUTPUT"

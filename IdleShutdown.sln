@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IdleShutdown.Service", "src
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IdleShutdown.Agent", "src\IdleShutdown.Agent\IdleShutdown.Agent.csproj", "{AD3203B2-A7E4-469A-A0CB-EE144FC6CEFB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IdleShutdown.LogicTests", "tests\IdleShutdown.LogicTests\IdleShutdown.LogicTests.csproj", "{C897E706-1E36-4A12-8B6F-8C7344FF1839}"
+EndProject
 Global
     GlobalSection(SolutionConfigurationPlatforms) = preSolution
         Debug|Any CPU = Debug|Any CPU
@@ -20,5 +22,9 @@ Global
         {AD3203B2-A7E4-469A-A0CB-EE144FC6CEFB}.Debug|Any CPU.Build.0 = Debug|Any CPU
         {AD3203B2-A7E4-469A-A0CB-EE144FC6CEFB}.Release|Any CPU.ActiveCfg = Release|Any CPU
         {AD3203B2-A7E4-469A-A0CB-EE144FC6CEFB}.Release|Any CPU.Build.0 = Release|Any CPU
+        {C897E706-1E36-4A12-8B6F-8C7344FF1839}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {C897E706-1E36-4A12-8B6F-8C7344FF1839}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {C897E706-1E36-4A12-8B6F-8C7344FF1839}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {C897E706-1E36-4A12-8B6F-8C7344FF1839}.Release|Any CPU.Build.0 = Release|Any CPU
     EndGlobalSection
 EndGlobal

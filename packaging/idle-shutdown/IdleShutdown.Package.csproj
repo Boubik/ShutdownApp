@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Version $(Version) adds automatic Czech, English, German and Spanish UI localization, follows the Windows light/dark application theme, uses a single default config.json source, and keeps runtime logging in English.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) adds automatic Czech, English, German and Spanish UI localization, follows the Windows light/dark application theme, uses a single default config.json source, keeps runtime logging in English, and resets the no-user timer when input is detected on the Windows sign-in screen.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>

@@ -9,7 +9,7 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 
 - Odemčená relace: po `IdleMinutes` nečinnosti se zobrazí odpočet `WarningSeconds`. Libovolný nový vstup nebo tlačítko v dialogu vypnutí zruší.
 - Zamčená relace: služba vypne počítač po `LockedMinutes` bez popupu. Vstup na zamykací obrazovce timer resetuje a těsně před vypnutím se kontroluje ještě jednou.
-- Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu.
+- Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce spustí celý timeout znovu.
 - `PauseWhenFullscreen`: před varováním se kontrolují systémové power/execution requests a poté skutečný fullscreen foreground okna.
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
 - Popup automaticky používá jazyk Windows (`cs`, `en`, `de`, `es`; ostatní jazyky použijí angličtinu).
@@ -132,7 +132,9 @@ Pro ověření stavů doporučujeme nejprve použít `DryRun:true` a krátké ti
 - po odhlášení se lock timer zruší a začne nový `NoUserMinutes` timer.
 
 Agent při zamčení kontroluje session-specific input každých 250 ms a posílá
-službě pouze tiché resety timeru. Jednotlivé pohyby a stisky se proto do logu
+službě pouze tiché resety timeru. Před přihlášením služba sleduje WTS čas
+posledního vstupu přímo ve fyzické konzolové relaci a před vypnutím znovu ověří
+vstup i přihlášení uživatele. Jednotlivé pohyby a stisky se proto do logu
 nezapisují.
 
 ## Odinstalace

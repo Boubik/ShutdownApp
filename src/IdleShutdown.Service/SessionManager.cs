@@ -7,12 +7,18 @@ internal sealed record SessionSnapshot(
     bool IsLocked,
     DateTime? LastInputTime);
 
+internal sealed record MachineSessionState(
+    IReadOnlyList<SessionSnapshot> LoggedOnSessions,
+    int? ConsoleSessionId,
+    DateTime? ConsoleLastInputTime);
+
 internal static class SessionManager
 {
     private const int WtsUserName = 5;
     private const int WtsSessionInfoEx = 25;
     private const int WtsDisconnected = 4;
     private const int WtsSessionStateLock = 0;
+    private const uint NoConsoleSession = 0xFFFFFFFF;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WtsSessionInfo
@@ -77,6 +83,9 @@ internal static class SessionManager
     [DllImport("wtsapi32.dll")]
     private static extern void WTSFreeMemory(IntPtr memory);
 
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
+
     [DllImport(
         "wtsapi32.dll",
         CharSet = CharSet.Unicode,
@@ -88,9 +97,14 @@ internal static class SessionManager
         out IntPtr buffer,
         out int bytesReturned);
 
-    public static IReadOnlyList<SessionSnapshot> GetInteractiveSessions()
+    public static MachineSessionState GetMachineSessionState()
     {
         IntPtr sessions = IntPtr.Zero;
+        var consoleSessionValue = WTSGetActiveConsoleSessionId();
+        var consoleSessionId =
+            consoleSessionValue == NoConsoleSession
+                ? (int?) null
+                : unchecked((int) consoleSessionValue);
 
         try
         {
@@ -109,6 +123,7 @@ internal static class SessionManager
             var result = new List<SessionSnapshot>();
             var itemSize = Marshal.SizeOf<WtsSessionInfo>();
             var current = sessions;
+            DateTime? consoleLastInputTime = null;
 
             for (var index = 0; index < count; index++)
             {
@@ -119,7 +134,16 @@ internal static class SessionManager
                 var userName = extended?.UserName ??
                                QueryString(item.SessionId, WtsUserName);
 
-                if (string.IsNullOrWhiteSpace(userName))
+                var lastInputTime = GetLastInputTime(extended);
+
+                if (item.SessionId == consoleSessionId)
+                {
+                    consoleLastInputTime = lastInputTime;
+                }
+
+                if (
+                    item.SessionId == 0 ||
+                    string.IsNullOrWhiteSpace(userName))
                 {
                     continue;
                 }
@@ -129,21 +153,6 @@ internal static class SessionManager
                     extended?.SessionState == WtsDisconnected ||
                     extended?.SessionFlags == WtsSessionStateLock;
 
-                DateTime? lastInputTime = null;
-
-                if (extended is { LastInputTime: > 0 })
-                {
-                    try
-                    {
-                        lastInputTime = DateTime.FromFileTimeUtc(
-                            extended.Value.LastInputTime);
-                    }
-                    catch (ArgumentOutOfRangeException)
-                    {
-                        // Treat an invalid WTS timestamp as unavailable.
-                    }
-                }
-
                 result.Add(
                     new SessionSnapshot(
                         item.SessionId,
@@ -151,7 +160,18 @@ internal static class SessionManager
                         lastInputTime));
             }
 
-            return result;
+            if (
+                consoleSessionId.HasValue &&
+                !consoleLastInputTime.HasValue)
+            {
+                consoleLastInputTime = GetLastInputTime(
+                    consoleSessionId.Value);
+            }
+
+            return new MachineSessionState(
+                result,
+                consoleSessionId,
+                consoleLastInputTime);
         }
         finally
         {
@@ -164,8 +184,13 @@ internal static class SessionManager
 
     public static DateTime? GetLastInputTime(int sessionId)
     {
-        var extended = QueryExtendedInfo(sessionId);
+        return GetLastInputTime(
+            QueryExtendedInfo(sessionId));
+    }
 
+    private static DateTime? GetLastInputTime(
+        WtsInfoExLevel1? extended)
+    {
         if (extended is not { LastInputTime: > 0 })
         {
             return null;

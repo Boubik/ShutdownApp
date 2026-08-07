@@ -6,7 +6,9 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Cancels the pending shutdown immediately when the user moves the mouse, presses a key or clicks **Continue working**.
 - Uses separate configurable timeouts for unlocked sessions, locked sessions and computers with no logged-on interactive user.
 - Detects mouse and keyboard activity on the Windows lock screen and resets the locked-session timer.
+- Detects mouse and keyboard activity on the Windows sign-in screen before any user logs on and resets the no-user timer.
 - Performs one final lock-screen input check immediately before shutdown to avoid powering off while somebody is entering a password.
+- Performs a final no-user state and console-input check immediately before shutdown.
 - Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
 - Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
 - Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.

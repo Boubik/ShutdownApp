@@ -16,6 +16,10 @@ if errorlevel 1 (
 
 for /f "delims=" %%V in ('dotnet --version') do set "DOTNET_VERSION=%%V"
 echo [INFO] Pouzivam .NET SDK: %DOTNET_VERSION%
+echo [INFO] Spoustim testy casovani a resetu aktivity...
+dotnet run --project "tests\IdleShutdown.LogicTests\IdleShutdown.LogicTests.csproj" -c Release
+if errorlevel 1 goto :build_failed
+
 echo [INFO] Cistim predchozi aplikacni build...
 
 if exist "dist\Service" rmdir /s /q "dist\Service"

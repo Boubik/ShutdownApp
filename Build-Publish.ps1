@@ -2,6 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Dist = Join-Path $Root 'dist'
+$LogicTests = Join-Path $Root 'tests\IdleShutdown.LogicTests\IdleShutdown.LogicTests.csproj'
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw 'Není nainstalované .NET SDK. Nainstalujte .NET 8 SDK.'
@@ -9,6 +10,12 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 Remove-Item $Dist -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $Dist -ItemType Directory -Force | Out-Null
+
+Write-Host '[INFO] Spouštím testy časování a resetů aktivity...'
+dotnet run --project $LogicTests -c Release
+if ($LASTEXITCODE -ne 0) {
+    throw "Logic tests failed with exit code $LASTEXITCODE."
+}
 
 Write-Host '[INFO] Publikuji Windows service...'
 dotnet publish (Join-Path $Root 'src\IdleShutdown.Service\IdleShutdown.Service.csproj') `

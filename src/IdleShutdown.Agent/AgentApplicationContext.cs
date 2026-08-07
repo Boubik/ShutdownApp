@@ -79,9 +79,8 @@ internal sealed class AgentApplicationContext : ApplicationContext
         var idle =
             NativeMethods.GetIdleTime();
 
-        if (
-            idle <
-            TimeSpan.FromMinutes(
+        if (!IdleThreshold.IsReached(
+                idle,
                 config.IdleMinutes))
         {
             _presentationDeferralLogged = false;
@@ -112,6 +111,11 @@ internal sealed class AgentApplicationContext : ApplicationContext
         {
             var inputAtStart =
                 NativeMethods.GetIdleTime();
+
+            Log.Write(
+                $"Idle timeout reached after " +
+                $"{inputAtStart.TotalSeconds:F0} second(s); " +
+                $"showing a {config.WarningSeconds}-second warning.");
 
             using var dialog =
                 new WarningForm(

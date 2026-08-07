@@ -13,11 +13,11 @@ internal sealed class IdleShutdownService : ServiceBase
     private readonly object _sync = new();
     private readonly Dictionary<int, DateTime> _lockedSince = new();
     private readonly Dictionary<int, DateTime?> _lockedSessionLastInput = new();
+    private readonly NoUserActivityTracker _noUserTracker = new();
 
     private CancellationTokenSource? _cts;
     private Task? _pipeTask;
     private System.Threading.Timer? _timer;
-    private DateTime? _noUserSince;
     private int _machineStateCheckRunning;
 
     public IdleShutdownService()
@@ -97,7 +97,7 @@ internal sealed class IdleShutdownService : ServiceBase
                     _lockedSessionLastInput.Remove(
                         changeDescription.SessionId);
 
-                    _noUserSince = null;
+                    _noUserTracker.ObserveLoggedOnUser();
 
                     Log.Write(
                         $"Session {changeDescription.SessionId}: " +
@@ -129,10 +129,15 @@ internal sealed class IdleShutdownService : ServiceBase
         try
         {
             var config = AppConfig.Load();
-            var sessions = SessionManager.GetInteractiveSessions();
+            var machineState = SessionManager.GetMachineSessionState();
 
-            CheckLockedSessions(config, sessions);
-            CheckNoUserState(config, sessions.Count > 0);
+            CheckLockedSessions(
+                config,
+                machineState.LoggedOnSessions);
+
+            CheckNoUserState(
+                config,
+                machineState);
         }
         catch (Exception ex)
         {
@@ -191,12 +196,9 @@ internal sealed class IdleShutdownService : ServiceBase
                     session.SessionId,
                     out var previousLastInput);
 
-                if (
-                    currentLastInput.HasValue &&
-                    (
-                        !previousLastInput.HasValue ||
-                        currentLastInput.Value > previousLastInput.Value
-                    ))
+                if (SessionInputActivity.HasChanged(
+                        previousLastInput,
+                        currentLastInput))
                 {
                     _lockedSessionLastInput[session.SessionId] =
                         currentLastInput;
@@ -217,10 +219,11 @@ internal sealed class IdleShutdownService : ServiceBase
                         SessionManager.GetLastInputTime(session.SessionId);
 
                     if (
-                        finalLastInput.HasValue &&
+                        SessionInputActivity.HasChanged(
+                            currentLastInput,
+                            finalLastInput) ||
                         (
-                            !currentLastInput.HasValue ||
-                            finalLastInput.Value > currentLastInput.Value ||
+                            finalLastInput.HasValue &&
                             DateTime.UtcNow - finalLastInput.Value <
                             TimeSpan.FromSeconds(
                                 Math.Max(
@@ -267,54 +270,86 @@ internal sealed class IdleShutdownService : ServiceBase
     }
     private void CheckNoUserState(
         AppConfig config,
-        bool anyUserLoggedOn)
+        MachineSessionState machineState)
     {
-        var timeoutReached = false;
+        var now = DateTime.UtcNow;
+        var timeout = TimeSpan.FromMinutes(
+            config.NoUserMinutes);
+        NoUserObservation observation;
 
         lock (_sync)
         {
-            if (anyUserLoggedOn)
+            if (machineState.LoggedOnSessions.Count > 0)
             {
-                if (_noUserSince.HasValue)
+                if (_noUserTracker.IsMonitoring)
                 {
                     Log.Write(
                         "A logged-on user was detected; " +
                         "no-user timer cleared.");
                 }
 
-                _noUserSince = null;
+                _noUserTracker.ObserveLoggedOnUser();
                 return;
             }
 
-            if (!_noUserSince.HasValue)
-            {
-                _noUserSince = DateTime.UtcNow;
+            observation = _noUserTracker.ObserveNoUser(
+                now,
+                timeout,
+                machineState.ConsoleSessionId,
+                machineState.ConsoleLastInputTime);
 
+            if (observation == NoUserObservation.Started)
+            {
                 Log.Write(
-                    $"No logged-on user detected; shutdown after " +
+                    $"No logged-on user detected; monitoring " +
+                    $"sign-in-screen input and shutting down after " +
                     $"{config.NoUserMinutes} minute(s).");
             }
 
-            if (
-                DateTime.UtcNow - _noUserSince.Value <
-                TimeSpan.FromMinutes(config.NoUserMinutes))
+            if (observation != NoUserObservation.TimeoutReached)
+            {
+                return;
+            }
+        }
+
+        // Re-read the complete state immediately before shutdown. This covers
+        // a user starting to sign in or pressing a key between periodic checks.
+        var finalState = SessionManager.GetMachineSessionState();
+        var finalNow = DateTime.UtcNow;
+
+        lock (_sync)
+        {
+            if (finalState.LoggedOnSessions.Count > 0)
+            {
+                _noUserTracker.ObserveLoggedOnUser();
+
+                Log.Write(
+                    "No-user shutdown cancelled because a logged-on " +
+                    "user was detected during the final check.");
+
+                return;
+            }
+
+            observation = _noUserTracker.ObserveNoUser(
+                finalNow,
+                timeout,
+                finalState.ConsoleSessionId,
+                finalState.ConsoleLastInputTime);
+
+            if (observation != NoUserObservation.TimeoutReached)
             {
                 return;
             }
 
-            Log.Write("No-user timeout reached.");
-
             // Prevent rapid repeated DryRun actions.
-            _noUserSince = DateTime.UtcNow;
-            timeoutReached = true;
+            _noUserTracker.ResetAfterAction(finalNow);
         }
 
-        if (timeoutReached)
-        {
-            RequestShutdown(
-                "no logged-on user timeout",
-                config);
-        }
+        Log.Write("No-user timeout reached after final input check.");
+
+        RequestShutdown(
+            "no logged-on user timeout",
+            config);
     }
 
     private static PipeSecurity CreatePipeSecurity()
