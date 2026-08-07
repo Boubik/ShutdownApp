@@ -12,8 +12,8 @@
     <Summary>Configurable idle, locked-session and no-user shutdown for centrally managed Windows computers.</Summary>
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Version $(Version) adds automatic Czech, English, German and Spanish UI localization, follows the Windows light/dark application theme, uses a single default config.json source, keeps runtime logging in English, and resets the no-user timer when input is detected on the Windows sign-in screen.</PackageReleaseNotes>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+    <PackageReleaseNotes>Version $(Version) adds a visible version label to the warning dialog, removes unsupported Chocolatey nuspec metadata, and resets the no-user timer when input is detected on the Windows sign-in screen.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>

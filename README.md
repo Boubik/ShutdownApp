@@ -14,6 +14,7 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
 - Popup automaticky používá jazyk Windows (`cs`, `en`, `de`, `es`; ostatní jazyky použijí angličtinu).
 - Popup automaticky používá světlý nebo tmavý režim podle nastavení aplikací ve Windows.
+- Popup zobrazuje nenápadné číslo právě běžící verze v pravém dolním rohu.
 - Provozní log služby i agenta je vždy v angličtině bez ohledu na jazyk popupu.
 
 Výchozí produkční konfigurace:

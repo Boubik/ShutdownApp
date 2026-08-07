@@ -13,6 +13,10 @@ internal sealed class AgentApplicationContext : ApplicationContext
     private bool _presentationDeferralLogged;
     private bool _wasWorkstationLocked;
     private uint? _lastObservedInputTick;
+    private DateTime? _lastLockDiagnosticUtc;
+    private int _lockInputChanges;
+    private int _lockPipeSuccesses;
+    private string? _lastLockPipeError;
 
     public AgentApplicationContext()
     {
@@ -55,13 +59,18 @@ internal sealed class AgentApplicationContext : ApplicationContext
 
         if (NativeMethods.IsWorkstationLocked())
         {
-            MonitorLockedSessionInput();
+            MonitorLockedSessionInput(config.DryRun);
             return;
         }
 
         if (_wasWorkstationLocked)
         {
             _wasWorkstationLocked = false;
+            _lastLockDiagnosticUtc = null;
+            _lockInputChanges = 0;
+            _lockPipeSuccesses = 0;
+            _lastLockPipeError = null;
+
             Log.Write(
                 "Workstation unlocked; lock-screen input " +
                 "monitoring stopped.");
@@ -147,7 +156,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
         }
     }
 
-    private void MonitorLockedSessionInput()
+    private void MonitorLockedSessionInput(bool diagnosticLogging)
     {
         _timer.Interval = LockedInputPollMilliseconds;
 
@@ -168,13 +177,48 @@ internal sealed class AgentApplicationContext : ApplicationContext
             _lastObservedInputTick.HasValue &&
             currentInputTick != _lastObservedInputTick.Value)
         {
-            SendLockedInputNotification();
+            _lockInputChanges++;
+
+            if (SendLockedInputNotification(out var error))
+            {
+                _lockPipeSuccesses++;
+            }
+            else
+            {
+                _lastLockPipeError = error;
+            }
         }
 
         _lastObservedInputTick = currentInputTick;
+
+        if (!diagnosticLogging)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (
+            _lastLockDiagnosticUtc.HasValue &&
+            now - _lastLockDiagnosticUtc.Value < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        Log.Write(
+            $"DRY RUN lock diagnostic: agent heartbeat; " +
+            $"inputTick={currentInputTick}; " +
+            $"inputChanges={_lockInputChanges}; " +
+            $"pipeSuccesses={_lockPipeSuccesses}; " +
+            $"lastPipeError={_lastLockPipeError ?? "none"}.");
+
+        _lastLockDiagnosticUtc = now;
+        _lockInputChanges = 0;
+        _lockPipeSuccesses = 0;
+        _lastLockPipeError = null;
     }
 
-    private static void SendLockedInputNotification()
+    private static bool SendLockedInputNotification(out string? error)
     {
         try
         {
@@ -195,11 +239,16 @@ internal sealed class AgentApplicationContext : ApplicationContext
                 System.Diagnostics.Process.GetCurrentProcess().SessionId;
 
             writer.WriteLine($"LOCK_INPUT:{sessionId}");
+
+            error = null;
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
             // Lock-screen input is best-effort. WTS remains the fallback and
             // failures must not display UI on the secure desktop.
+            error = $"{ex.GetType().Name}: {ex.Message}";
+            return false;
         }
     }
 

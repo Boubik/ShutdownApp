@@ -8,6 +8,13 @@ internal sealed class NoUserActivityTracker
 
     public bool IsMonitoring => _inactiveSince.HasValue;
 
+    public double GetElapsedSeconds(DateTime now)
+    {
+        return _inactiveSince.HasValue
+            ? Math.Max(0, (now - _inactiveSince.Value).TotalSeconds)
+            : 0;
+    }
+
     public void ObserveLoggedOnUser()
     {
         _inactiveSince = null;

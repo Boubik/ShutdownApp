@@ -173,6 +173,20 @@ internal sealed class WarningForm : Form
         _continueButton.Click += (_, _) => CancelShutdown();
         card.Controls.Add(_continueButton);
 
+        var versionLabel = new Label
+        {
+            AutoSize = false,
+            Font = new Font("Segoe UI", 7F, FontStyle.Regular),
+            ForeColor = _palette.MutedText,
+            Location = new Point(476, 348),
+            Size = new Size(82, 14),
+            TabStop = false,
+            Text = GetVersionText(),
+            TextAlign = ContentAlignment.BottomRight
+        };
+
+        card.Controls.Add(versionLabel);
+
         AcceptButton = _continueButton;
         CancelButton = _continueButton;
 
@@ -297,6 +311,16 @@ internal sealed class WarningForm : Form
         var seconds = Math.Max(0, totalSeconds);
         return $"{seconds / 60:00}:{seconds % 60:00}";
     }
+
+    private static string GetVersionText()
+    {
+        var version = typeof(WarningForm).Assembly.GetName().Version;
+
+        return version is null
+            ? string.Empty
+            : $"v{version.Major}.{version.Minor}.{version.Build}";
+    }
+
     private void DrawSleepIcon(
         object? sender,
         PaintEventArgs e)

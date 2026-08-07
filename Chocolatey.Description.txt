@@ -14,6 +14,7 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.
 - Automatically localizes the warning dialog for Czech, English, German and Spanish Windows environments, with English as the fallback.
 - Automatically follows the Windows light or dark application theme whenever the warning is displayed.
+- Shows the running application version unobtrusively in the warning dialog for easier fleet diagnostics.
 - Supports safe testing with `DryRun: true`; shutdown decisions are logged without powering off the computer.
 - Writes important state changes to a shared English-only log without logging every periodic check.
 - Preserves the existing configuration during Chocolatey upgrades unless `/ResetConfig` is supplied.

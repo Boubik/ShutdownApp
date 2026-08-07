@@ -13,11 +13,14 @@ internal sealed class IdleShutdownService : ServiceBase
     private readonly object _sync = new();
     private readonly Dictionary<int, DateTime> _lockedSince = new();
     private readonly Dictionary<int, DateTime?> _lockedSessionLastInput = new();
+    private readonly Dictionary<int, DateTime> _lockedDiagnosticLoggedAt = new();
+    private readonly Dictionary<int, int> _lockedPipeResetCount = new();
     private readonly NoUserActivityTracker _noUserTracker = new();
 
     private CancellationTokenSource? _cts;
     private Task? _pipeTask;
     private System.Threading.Timer? _timer;
+    private DateTime? _noUserDiagnosticLoggedAt;
     private int _machineStateCheckRunning;
 
     public IdleShutdownService()
@@ -84,6 +87,9 @@ internal sealed class IdleShutdownService : ServiceBase
                     _lockedSessionLastInput[changeDescription.SessionId] =
                         SessionManager.GetLastInputTime(changeDescription.SessionId);
 
+                    _lockedDiagnosticLoggedAt.Remove(changeDescription.SessionId);
+                    _lockedPipeResetCount[changeDescription.SessionId] = 0;
+
                     Log.Write(
                         $"Session {changeDescription.SessionId} locked; " +
                         "lock timer started.");
@@ -97,7 +103,14 @@ internal sealed class IdleShutdownService : ServiceBase
                     _lockedSessionLastInput.Remove(
                         changeDescription.SessionId);
 
+                    _lockedDiagnosticLoggedAt.Remove(
+                        changeDescription.SessionId);
+
+                    _lockedPipeResetCount.Remove(
+                        changeDescription.SessionId);
+
                     _noUserTracker.ObserveLoggedOnUser();
+                    _noUserDiagnosticLoggedAt = null;
 
                     Log.Write(
                         $"Session {changeDescription.SessionId}: " +
@@ -109,6 +122,12 @@ internal sealed class IdleShutdownService : ServiceBase
                         changeDescription.SessionId);
 
                     _lockedSessionLastInput.Remove(
+                        changeDescription.SessionId);
+
+                    _lockedDiagnosticLoggedAt.Remove(
+                        changeDescription.SessionId);
+
+                    _lockedPipeResetCount.Remove(
                         changeDescription.SessionId);
 
                     Log.Write(
@@ -171,6 +190,8 @@ internal sealed class IdleShutdownService : ServiceBase
 
                 _lockedSince.Remove(trackedSessionId);
                 _lockedSessionLastInput.Remove(trackedSessionId);
+                _lockedDiagnosticLoggedAt.Remove(trackedSessionId);
+                _lockedPipeResetCount.Remove(trackedSessionId);
 
                 Log.Write(
                     $"Session {trackedSessionId} is no longer locked; " +
@@ -184,6 +205,8 @@ internal sealed class IdleShutdownService : ServiceBase
                     _lockedSince[session.SessionId] = DateTime.UtcNow;
                     _lockedSessionLastInput[session.SessionId] =
                         session.LastInputTime;
+
+                    _lockedPipeResetCount[session.SessionId] = 0;
 
                     Log.Write(
                         $"Locked session {session.SessionId} detected; " +
@@ -208,6 +231,11 @@ internal sealed class IdleShutdownService : ServiceBase
 
                     continue;
                 }
+
+                WriteLockedDiagnosticIfDue(
+                    config,
+                    session.SessionId,
+                    currentLastInput);
 
                 if (
                     DateTime.UtcNow - _lockedSince[session.SessionId] >=
@@ -266,7 +294,53 @@ internal sealed class IdleShutdownService : ServiceBase
 
             _lockedSessionLastInput.Remove(
                 sessionToShutdown.Value);
+
+            _lockedDiagnosticLoggedAt.Remove(
+                sessionToShutdown.Value);
+
+            _lockedPipeResetCount.Remove(
+                sessionToShutdown.Value);
         }
+    }
+
+    private void WriteLockedDiagnosticIfDue(
+        AppConfig config,
+        int sessionId,
+        DateTime? wtsLastInput)
+    {
+        if (!config.DryRun)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (
+            _lockedDiagnosticLoggedAt.TryGetValue(sessionId, out var lastLog) &&
+            now - lastLog < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        _lockedPipeResetCount.TryGetValue(
+            sessionId,
+            out var pipeResets);
+
+        var timerSeconds = _lockedSince.TryGetValue(
+            sessionId,
+            out var lockedSince)
+                ? Math.Max(0, (now - lockedSince).TotalSeconds)
+                : 0;
+
+        Log.Write(
+            $"DRY RUN lock diagnostic: service heartbeat; " +
+            $"session={sessionId}; " +
+            $"wtsLastInput={wtsLastInput?.ToString("O") ?? "unavailable"}; " +
+            $"pipeResets={pipeResets}; " +
+            $"timerSeconds={timerSeconds:F0}.");
+
+        _lockedDiagnosticLoggedAt[sessionId] = now;
+        _lockedPipeResetCount[sessionId] = 0;
     }
     private void CheckNoUserState(
         AppConfig config,
@@ -289,6 +363,7 @@ internal sealed class IdleShutdownService : ServiceBase
                 }
 
                 _noUserTracker.ObserveLoggedOnUser();
+                _noUserDiagnosticLoggedAt = null;
                 return;
             }
 
@@ -306,6 +381,12 @@ internal sealed class IdleShutdownService : ServiceBase
                     $"{config.NoUserMinutes} minute(s).");
             }
 
+            WriteNoUserDiagnosticIfDue(
+                config,
+                now,
+                machineState,
+                observation);
+
             if (observation != NoUserObservation.TimeoutReached)
             {
                 return;
@@ -322,6 +403,7 @@ internal sealed class IdleShutdownService : ServiceBase
             if (finalState.LoggedOnSessions.Count > 0)
             {
                 _noUserTracker.ObserveLoggedOnUser();
+                _noUserDiagnosticLoggedAt = null;
 
                 Log.Write(
                     "No-user shutdown cancelled because a logged-on " +
@@ -350,6 +432,35 @@ internal sealed class IdleShutdownService : ServiceBase
         RequestShutdown(
             "no logged-on user timeout",
             config);
+    }
+
+    private void WriteNoUserDiagnosticIfDue(
+        AppConfig config,
+        DateTime now,
+        MachineSessionState machineState,
+        NoUserObservation observation)
+    {
+        if (!config.DryRun)
+        {
+            return;
+        }
+
+        if (
+            observation != NoUserObservation.InputDetected &&
+            _noUserDiagnosticLoggedAt.HasValue &&
+            now - _noUserDiagnosticLoggedAt.Value < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        Log.Write(
+            $"DRY RUN no-user diagnostic: service heartbeat; " +
+            $"consoleSession={machineState.ConsoleSessionId?.ToString() ?? "unavailable"}; " +
+            $"wtsLastInput={machineState.ConsoleLastInputTime?.ToString("O") ?? "unavailable"}; " +
+            $"observation={observation}; " +
+            $"timerSeconds={_noUserTracker.GetElapsedSeconds(now):F0}.");
+
+        _noUserDiagnosticLoggedAt = now;
     }
 
     private static PipeSecurity CreatePipeSecurity()
@@ -486,6 +597,12 @@ internal sealed class IdleShutdownService : ServiceBase
             if (_lockedSince.ContainsKey(sessionId))
             {
                 _lockedSince[sessionId] = DateTime.UtcNow;
+
+                _lockedPipeResetCount.TryGetValue(
+                    sessionId,
+                    out var resetCount);
+
+                _lockedPipeResetCount[sessionId] = resetCount + 1;
             }
         }
 
