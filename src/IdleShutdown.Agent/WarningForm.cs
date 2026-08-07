@@ -9,6 +9,8 @@ internal sealed class WarningForm : Form
     private readonly TimeSpan _idleAtStart;
     private readonly Stopwatch _countdown = Stopwatch.StartNew();
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly UiStrings _ui;
+    private readonly UiPalette _palette;
 
     private readonly Label _countdownLabel;
     private readonly Label _statusLabel;
@@ -23,6 +25,8 @@ internal sealed class WarningForm : Form
     {
         _warningSeconds = Math.Max(1, warningSeconds);
         _idleAtStart = idleAtStart;
+        _ui = LocalizedText.Current;
+        _palette = UiTheme.Current;
 
         AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = Color.Magenta;
@@ -36,7 +40,7 @@ internal sealed class WarningForm : Form
         ShowInTaskbar = true;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         StartPosition = FormStartPosition.CenterScreen;
-        Text = "Automatické vypnutí";
+        Text = _ui.WindowTitle;
         TopMost = true;
         DoubleBuffered = true;
 
@@ -50,7 +54,7 @@ internal sealed class WarningForm : Form
         var card = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(250, 251, 253),
+            BackColor = _palette.CardBackground,
             Padding = new Padding(44, 34, 44, 28)
         };
 
@@ -59,7 +63,7 @@ internal sealed class WarningForm : Form
 
         _iconCircle = new Panel
         {
-            BackColor = Color.FromArgb(232, 241, 255),
+            BackColor = _palette.IconBackground,
             Location = new Point(44, 34),
             Size = new Size(58, 58)
         };
@@ -71,10 +75,10 @@ internal sealed class WarningForm : Form
         {
             AutoSize = false,
             Font = new Font("Segoe UI", 20F, FontStyle.Bold),
-            ForeColor = Color.FromArgb(22, 30, 42),
+            ForeColor = _palette.PrimaryText,
             Location = new Point(120, 34),
             Size = new Size(410, 40),
-            Text = "Automatick\u00E9 vypnut\u00ED"
+            Text = _ui.Title
         };
 
         card.Controls.Add(title);
@@ -83,11 +87,10 @@ internal sealed class WarningForm : Form
         {
             AutoSize = false,
             Font = new Font("Segoe UI", 10.5F, FontStyle.Regular),
-            ForeColor = Color.FromArgb(86, 98, 114),
+            ForeColor = _palette.SecondaryText,
             Location = new Point(120, 75),
             Size = new Size(408, 50),
-            Text = "Tento po\u010D\u00EDta\u010D nebyl del\u0161\u00ED dobu pou\u017E\u00EDv\u00E1n. " +
-                   "Pokra\u010Dov\u00E1n\u00EDm v pr\u00E1ci vypnut\u00ED okam\u017Eit\u011B zru\u0161\u00EDte."
+            Text = _ui.Status
         };
 
         card.Controls.Add(_statusLabel);
@@ -96,10 +99,10 @@ internal sealed class WarningForm : Form
         {
             AutoSize = false,
             Font = new Font("Segoe UI", 10F, FontStyle.Regular),
-            ForeColor = Color.FromArgb(102, 113, 128),
+            ForeColor = _palette.MutedText,
             Location = new Point(44, 138),
             Size = new Size(492, 24),
-            Text = "Vypnut\u00ED za",
+            Text = _ui.CountdownCaption,
             TextAlign = ContentAlignment.MiddleCenter
         };
 
@@ -109,7 +112,7 @@ internal sealed class WarningForm : Form
         {
             AutoSize = false,
             Font = new Font("Segoe UI", 40F, FontStyle.Bold),
-            ForeColor = Color.FromArgb(24, 102, 210),
+            ForeColor = _palette.Accent,
             Location = new Point(44, 158),
             Size = new Size(492, 72),
             Text = FormatTime(_warningSeconds),
@@ -120,14 +123,14 @@ internal sealed class WarningForm : Form
 
         _progressTrack = new Panel
         {
-            BackColor = Color.FromArgb(224, 230, 238),
+            BackColor = _palette.ProgressTrack,
             Location = new Point(44, 238),
             Size = new Size(492, 10)
         };
 
         _progressFill = new Panel
         {
-            BackColor = Color.FromArgb(24, 102, 210),
+            BackColor = _palette.Accent,
             Location = new Point(0, 0),
             Size = new Size(492, 10)
         };
@@ -139,11 +142,10 @@ internal sealed class WarningForm : Form
         {
             AutoSize = false,
             Font = new Font("Segoe UI", 9.5F, FontStyle.Regular),
-            ForeColor = Color.FromArgb(96, 108, 124),
+            ForeColor = _palette.MutedText,
             Location = new Point(44, 260),
             Size = new Size(492, 42),
-            Text = "Pohn\u011Bte my\u0161\u00ED, stiskn\u011Bte libovolnou kl\u00E1vesu " +
-                   "nebo pou\u017Eijte tla\u010D\u00EDtko n\u00ED\u017Ee.",
+            Text = _ui.Hint,
             TextAlign = ContentAlignment.MiddleCenter
         };
 
@@ -151,19 +153,23 @@ internal sealed class WarningForm : Form
 
         _continueButton = new Button
         {
-            BackColor = Color.FromArgb(24, 102, 210),
+            BackColor = _palette.Accent,
             Cursor = Cursors.Hand,
             FlatStyle = FlatStyle.Flat,
             Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-            ForeColor = Color.White,
+            ForeColor = _palette.ButtonText,
             Location = new Point(152, 307),
             Size = new Size(276, 48),
             TabIndex = 0,
-            Text = "Pokra\u010Dovat v pr\u00E1ci",
+            Text = _ui.ContinueButton,
             UseVisualStyleBackColor = false
         };
 
         _continueButton.FlatAppearance.BorderSize = 0;
+        _continueButton.FlatAppearance.MouseOverBackColor =
+            _palette.AccentHover;
+        _continueButton.FlatAppearance.MouseDownBackColor =
+            _palette.AccentHover;
         _continueButton.Click += (_, _) => CancelShutdown();
         card.Controls.Add(_continueButton);
 
@@ -269,14 +275,12 @@ internal sealed class WarningForm : Form
         if (remainingSeconds <= 5)
         {
             _countdownLabel.ForeColor =
-                Color.FromArgb(190, 43, 43);
+                _palette.Danger;
 
             _progressFill.BackColor =
-                Color.FromArgb(190, 43, 43);
+                _palette.Danger;
 
-            _statusLabel.Text =
-                "Vypnut\u00ED je bezprost\u0159edn\u00ED. " +
-                "Pohn\u011Bte my\u0161\u00ED nebo pokra\u010Dujte tla\u010D\u00EDtkem.";
+            _statusLabel.Text = _ui.UrgentStatus;
         }
     }
 
@@ -293,25 +297,22 @@ internal sealed class WarningForm : Form
         var seconds = Math.Max(0, totalSeconds);
         return $"{seconds / 60:00}:{seconds % 60:00}";
     }
-    private static void DrawSleepIcon(
+    private void DrawSleepIcon(
         object? sender,
         PaintEventArgs e)
     {
         e.Graphics.SmoothingMode =
             SmoothingMode.AntiAlias;
 
-        var blue =
-            Color.FromArgb(24, 102, 210);
-
         using var moonBrush =
-            new SolidBrush(blue);
+            new SolidBrush(_palette.Accent);
 
         using var cutoutBrush =
             new SolidBrush(
-                Color.FromArgb(232, 241, 255));
+                _palette.IconBackground);
 
         using var zBrush =
-            new SolidBrush(blue);
+            new SolidBrush(_palette.Accent);
 
         using var largeFont =
             new Font(

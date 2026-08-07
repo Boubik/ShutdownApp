@@ -22,7 +22,7 @@ Start-Sleep -Seconds 2
 Copy-Item (Join-Path $Dist 'Service\*') $InstallDir -Recurse -Force
 Copy-Item (Join-Path $Dist 'Agent\*') $InstallDir -Recurse -Force
 if (-not (Test-Path (Join-Path $DataDir 'config.json'))) {
-    Copy-Item (Join-Path $Dist 'config.json') (Join-Path $DataDir 'config.json') -Force
+    Copy-Item (Join-Path $Root 'config.json') (Join-Path $DataDir 'config.json') -Force
 }
 
 $logPath = Join-Path $DataDir 'IdleShutdown.log'
@@ -42,7 +42,7 @@ Set-Acl -Path $logPath -AclObject $logAcl
 
 $serviceExe = Join-Path $InstallDir 'IdleShutdown.Service.exe'
 sc.exe create $ServiceName binPath= "`"$serviceExe`"" start= auto DisplayName= "Idle Shutdown" | Out-Null
-sc.exe description $ServiceName "Automatické vypnutí počítače po nečinnosti nebo delším zamčení." | Out-Null
+sc.exe description $ServiceName "Automatically shuts down the computer after inactivity, a prolonged lock, or no-user state." | Out-Null
 sc.exe failure $ServiceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
 Start-Service $ServiceName
 
@@ -50,7 +50,7 @@ $agentExe = Join-Path $InstallDir 'IdleShutdown.Agent.exe'
 $taskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Agent pro automatické vypnutí po nečinnosti.</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Interactive agent for automatic shutdown after inactivity.</Description></RegistrationInfo>
   <Triggers><LogonTrigger><Enabled>true</Enabled><Delay>PT10S</Delay></LogonTrigger></Triggers>
   <Principals><Principal id="Users"><GroupId>S-1-5-32-545</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>

@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Version $(Version) fixes lock-screen input resets through the session agent and starts the agent immediately when Chocolatey runs in an already active user session.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) adds automatic Czech, English, German and Spanish UI localization, follows the Windows light/dark application theme, uses a single default config.json source, and keeps runtime logging in English.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>
@@ -22,7 +22,7 @@
     <None Include="tools\**" Pack="true" PackagePath="tools" />
     <None Include="..\..\dist\Service\**" Pack="true" PackagePath="tools\dist\Service" />
     <None Include="..\..\dist\Agent\**" Pack="true" PackagePath="tools\dist\Agent" />
-    <None Include="..\..\dist\config.json" Pack="true" PackagePath="tools\dist" />
+    <None Include="..\..\config.json" Pack="true" PackagePath="tools\dist\config.json" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 

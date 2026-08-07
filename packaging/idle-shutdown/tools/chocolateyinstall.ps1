@@ -6,6 +6,7 @@ $payloadDir = Join-Path $toolsDir 'dist'
 $installDir = Join-Path $env:ProgramFiles 'IdleShutdown'
 $dataDir = Join-Path $env:ProgramData 'IdleShutdown'
 $configPath = Join-Path $dataDir 'config.json'
+$defaultConfigPath = Join-Path $payloadDir 'config.json'
 $logPath = Join-Path $dataDir 'IdleShutdown.log'
 $serviceName = 'IdleShutdown'
 $taskName = 'Idle Shutdown Agent'
@@ -17,12 +18,14 @@ function Get-PositiveIntegerParameter {
         [int] $CurrentValue
     )
 
-    if (-not $parameters.ContainsKey($Name)) {
-        return $CurrentValue
+    $value = if ($parameters.ContainsKey($Name)) {
+        [string] $parameters[$Name]
     }
-
+    else {
+        [string] $CurrentValue
+    }
     $parsed = 0
-    if (-not [int]::TryParse([string] $parameters[$Name], [ref] $parsed) -or $parsed -lt 1) {
+    if (-not [int]::TryParse($value, [ref] $parsed) -or $parsed -lt 1) {
         throw "Package parameter /$Name must be a positive integer."
     }
 
@@ -35,12 +38,14 @@ function Get-BooleanParameter {
         [bool] $CurrentValue
     )
 
-    if (-not $parameters.ContainsKey($Name)) {
-        return $CurrentValue
+    $value = if ($parameters.ContainsKey($Name)) {
+        [string] $parameters[$Name]
     }
-
+    else {
+        [string] $CurrentValue
+    }
     $parsed = $false
-    if (-not [bool]::TryParse([string] $parameters[$Name], [ref] $parsed)) {
+    if (-not [bool]::TryParse($value, [ref] $parsed)) {
         throw "Package parameter /$Name must be true or false."
     }
 
@@ -54,14 +59,33 @@ if (-not (Test-Path $serviceExe) -or -not (Test-Path $agentExe)) {
     throw 'The package does not contain the published service and agent executables.'
 }
 
-$config = [ordered]@{
-    IdleMinutes = 60
-    WarningSeconds = 300
-    LockedMinutes = 60
-    NoUserMinutes = 60
-    CheckIntervalSeconds = 5
-    PauseWhenFullscreen = $true
-    DryRun = $false
+if (-not (Test-Path $defaultConfigPath)) {
+    throw 'The package does not contain its default config.json.'
+}
+
+try {
+    $defaults = Get-Content $defaultConfigPath -Raw | ConvertFrom-Json
+}
+catch {
+    throw "Packaged default configuration is invalid: $($_.Exception.Message)"
+}
+
+$config = [ordered]@{}
+foreach ($name in @(
+    'IdleMinutes',
+    'WarningSeconds',
+    'LockedMinutes',
+    'NoUserMinutes',
+    'CheckIntervalSeconds',
+    'PauseWhenFullscreen',
+    'DryRun'
+)) {
+    $property = $defaults.PSObject.Properties[$name]
+    if ($null -eq $property) {
+        throw "Packaged default configuration is missing $name."
+    }
+
+    $config[$name] = $property.Value
 }
 
 $resetConfig = $parameters.ContainsKey('ResetConfig')
@@ -124,7 +148,7 @@ else {
     sc.exe config $serviceName binPath= "`"$installedServiceExe`"" start= auto DisplayName= "Idle Shutdown" | Out-Null
 }
 
-sc.exe description $serviceName "Automatické vypnutí počítače po nečinnosti nebo delším zamčení." | Out-Null
+sc.exe description $serviceName "Automatically shuts down the computer after inactivity, a prolonged lock, or no-user state." | Out-Null
 sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
 
 $installedAgentExe = Join-Path $installDir 'IdleShutdown.Agent.exe'
@@ -132,7 +156,7 @@ $agentExeXml = [System.Security.SecurityElement]::Escape($installedAgentExe)
 $taskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Agent pro automatické vypnutí po nečinnosti.</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Interactive agent for automatic shutdown after inactivity.</Description></RegistrationInfo>
   <Triggers><LogonTrigger><Enabled>true</Enabled><Delay>PT10S</Delay></LogonTrigger></Triggers>
   <Principals><Principal id="Users"><GroupId>S-1-5-32-545</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>

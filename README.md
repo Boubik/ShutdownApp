@@ -12,6 +12,9 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 - Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu.
 - `PauseWhenFullscreen`: před varováním se kontrolují systémové power/execution requests a poté skutečný fullscreen foreground okna.
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
+- Popup automaticky používá jazyk Windows (`cs`, `en`, `de`, `es`; ostatní jazyky použijí angličtinu).
+- Popup automaticky používá světlý nebo tmavý režim podle nastavení aplikací ve Windows.
+- Provozní log služby i agenta je vždy v angličtině bez ohledu na jazyk popupu.
 
 Výchozí produkční konfigurace:
 
@@ -26,6 +29,11 @@ Výchozí produkční konfigurace:
   "DryRun": false
 }
 ```
+
+Jediným zdrojem výchozí konfigurace je kořenový soubor `config.json`.
+Build nevytváří druhou konfigurační kopii v `dist`; při balení se tento soubor
+vloží dovnitř `.nupkg` a instalátor z něj načte výchozí hodnoty. Soubor v
+`C:\ProgramData\IdleShutdown` je až provozní konfigurace konkrétní instalace.
 
 Konfigurace a společný log jsou v:
 

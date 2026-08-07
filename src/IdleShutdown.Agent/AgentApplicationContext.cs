@@ -264,12 +264,13 @@ internal sealed class AgentApplicationContext : ApplicationContext
             $"Unable to contact service after 3 attempts: " +
             $"{errorText}");
 
+        var ui = LocalizedText.Current;
+
         MessageBox.Show(
-            "Nepodařilo se kontaktovat službu " +
-            "automatického vypnutí.\r\n\r\n" +
-            "Počítač nebude vypnut.\r\n\r\n" +
-            $"Technický detail: {errorText}",
-            "Automatické vypnutí",
+            $"{ui.ServiceContactFailed}\r\n\r\n" +
+            $"{ui.ComputerWillNotShutdown}\r\n\r\n" +
+            $"{ui.TechnicalDetail}: {errorText}",
+            ui.WindowTitle,
             MessageBoxButtons.OK,
             MessageBoxIcon.Error);
     }

@@ -45,8 +45,6 @@ echo "[INFO] Publikuji uživatelského agenta (win-x64)..."
     -p:IncludeNativeLibrariesForSelfExtract=true \
     -o "$AGENT_OUTPUT"
 
-cp -- "$SCRIPT_DIR/config.test.json" "$DIST_DIR/config.json"
-
 if [[ ! -f "$SERVICE_OUTPUT/IdleShutdown.Service.exe" ||
       ! -f "$AGENT_OUTPUT/IdleShutdown.Agent.exe" ]]; then
     echo "[ERROR] Build skončil bez očekávaných EXE souborů." >&2

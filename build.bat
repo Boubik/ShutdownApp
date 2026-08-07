@@ -31,8 +31,7 @@ echo [INFO] Publikuji uzivatelskeho agenta (win-x64)...
 dotnet publish "src\IdleShutdown.Agent\IdleShutdown.Agent.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "dist\Agent"
 if errorlevel 1 goto :build_failed
 
-copy /y "config.test.json" "dist\config.json" >nul
-if errorlevel 1 goto :build_failed
+if exist "dist\config.json" del /q "dist\config.json"
 
 if not exist "dist\Service\IdleShutdown.Service.exe" (
     echo [ERROR] Chybi dist\Service\IdleShutdown.Service.exe.

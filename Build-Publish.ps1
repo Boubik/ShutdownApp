@@ -22,7 +22,7 @@ dotnet publish (Join-Path $Root 'src\IdleShutdown.Agent\IdleShutdown.Agent.cspro
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
     -o (Join-Path $Dist 'Agent')
 
-Copy-Item (Join-Path $Root 'config.test.json') (Join-Path $Dist 'config.json') -Force
+Remove-Item (Join-Path $Dist 'config.json') -Force -ErrorAction SilentlyContinue
 dotnet pack (Join-Path $Root 'packaging\idle-shutdown\IdleShutdown.Package.csproj') `
     -c Release --disable-build-servers
 Write-Host "[OK] Výstup: $Dist"
