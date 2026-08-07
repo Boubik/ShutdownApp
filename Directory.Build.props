@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- VERSION is the single source of truth for all .NET assemblies. -->
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</Version>
+  </PropertyGroup>
+</Project>

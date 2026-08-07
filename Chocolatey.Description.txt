@@ -1,0 +1,73 @@
+Idle Shutdown automatically powers off inactive Windows computers. It is designed for centrally managed classrooms, laboratories, kiosks and shared workstations where machines should not remain powered on indefinitely.
+
+## Features
+
+- Displays a warning dialog after a configurable period of inactivity in an unlocked user session.
+- Cancels the pending shutdown immediately when the user moves the mouse, presses a key or clicks **Continue working**.
+- Uses separate configurable timeouts for unlocked sessions, locked sessions and computers with no logged-on interactive user.
+- Detects mouse and keyboard activity on the Windows lock screen and resets the locked-session timer.
+- Performs one final lock-screen input check immediately before shutdown to avoid powering off while somebody is entering a password.
+- Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
+- Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
+- Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.
+- Supports safe testing with `DryRun: true`; shutdown decisions are logged without powering off the computer.
+- Writes important state changes to a shared log without logging every periodic check.
+- Preserves the existing configuration during Chocolatey upgrades unless `/ResetConfig` is supplied.
+- Includes the remote-friendly `idle-shutdown-test` health-check command.
+
+## Installed components
+
+- Windows service: `IdleShutdown`
+- Scheduled task: `Idle Shutdown Agent`
+- Installation directory: `C:\Program Files\IdleShutdown`
+- Configuration: `C:\ProgramData\IdleShutdown\config.json`
+- Log: `C:\ProgramData\IdleShutdown\IdleShutdown.log`
+
+## Default configuration
+
+- `IdleMinutes`: `60`
+- `WarningSeconds`: `300`
+- `LockedMinutes`: `60`
+- `NoUserMinutes`: `60`
+- `CheckIntervalSeconds`: `5`
+- `PauseWhenFullscreen`: `true`
+- `DryRun`: `false`
+
+With these defaults, an unlocked computer shuts down after approximately 60 minutes of inactivity plus a 5-minute warning. A locked computer shuts down after 60 minutes without lock-screen activity, and a computer without a logged-on user shuts down after 60 minutes.
+
+## Chocolatey package parameters
+
+- `/IdleMinutes:<minutes>` — inactivity duration before the warning dialog is displayed.
+- `/WarningSeconds:<seconds>` — warning countdown before the shutdown request is sent.
+- `/LockedMinutes:<minutes>` — lock-screen inactivity duration before shutdown.
+- `/NoUserMinutes:<minutes>` — duration before shutdown when no interactive user is logged on.
+- `/CheckIntervalSeconds:<seconds>` — interval used by the service and agent to evaluate the current state.
+- `/PauseWhenFullscreen:true|false` — enables or disables presentation and fullscreen protection.
+- `/DryRun:true|false` — logs shutdown decisions without powering off the computer when enabled.
+- `/ResetConfig` — replaces the existing configuration with package defaults before applying other parameters.
+
+## Examples
+
+Installation with production defaults:
+
+```powershell
+choco install idle-shutdown -y
+```
+
+Short safe test:
+
+```powershell
+choco install idle-shutdown -y --params="'/IdleMinutes:1 /WarningSeconds:30 /LockedMinutes:1 /NoUserMinutes:1 /CheckIntervalSeconds:5 /PauseWhenFullscreen:false /DryRun:true'"
+```
+
+Upgrade while changing selected values:
+
+```powershell
+choco upgrade idle-shutdown -y --params="'/LockedMinutes:30 /NoUserMinutes:30'"
+```
+
+Health check:
+
+```powershell
+idle-shutdown-test
+```

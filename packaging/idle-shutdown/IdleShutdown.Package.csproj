@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+
+    <PackageId>idle-shutdown</PackageId>
+    <Title>Idle Shutdown for Windows</Title>
+    <Authors>Idle Shutdown maintainers</Authors>
+    <Description>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\Chocolatey.Description.txt').Trim())</Description>
+    <Summary>Configurable idle, locked-session and no-user shutdown for centrally managed Windows computers.</Summary>
+    <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>Uses the current Idle Shutdown names and documents the service, agent, configuration, health check and package parameters.</PackageReleaseNotes>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
+    <NoWarn>$(NoWarn);NU5111</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="tools\**" Pack="true" PackagePath="tools" />
+    <None Include="..\..\dist\Service\**" Pack="true" PackagePath="tools\dist\Service" />
+    <None Include="..\..\dist\Agent\**" Pack="true" PackagePath="tools\dist\Agent" />
+    <None Include="..\..\dist\config.json" Pack="true" PackagePath="tools\dist" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <Target Name="RemovePreviousPackages" BeforeTargets="GenerateNuspec">
+    <ItemGroup>
+      <PreviousPackages Include="$(PackageOutputPath)idle-shutdown*.nupkg" />
+    </ItemGroup>
+    <Delete Files="@(PreviousPackages)" />
+  </Target>
+
+  <Target Name="UseStablePackageFileName" AfterTargets="Pack">
+    <PropertyGroup>
+      <VersionedPackagePath>$(PackageOutputPath)$(PackageId).$(PackageVersion).nupkg</VersionedPackagePath>
+      <StablePackagePath>$(PackageOutputPath)idle-shutdown.nupkg</StablePackagePath>
+    </PropertyGroup>
+    <Error
+      Condition="!Exists('$(VersionedPackagePath)')"
+      Text="Expected package was not created: $(VersionedPackagePath)" />
+    <Move
+      SourceFiles="$(VersionedPackagePath)"
+      DestinationFiles="$(StablePackagePath)" />
+    <Message
+      Importance="high"
+      Text="Stable Chocolatey package: $(StablePackagePath) (version $(PackageVersion))" />
+  </Target>
+</Project>
