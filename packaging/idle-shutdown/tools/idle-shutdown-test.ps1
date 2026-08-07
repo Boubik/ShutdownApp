@@ -34,6 +34,15 @@ elseif ($task.State -eq 'Disabled') {
     $errors.Add('Scheduled task Idle Shutdown Agent is disabled.')
 }
 
+$interactiveShell = Get-Process 'explorer' -ErrorAction SilentlyContinue
+$agentProcess = Get-Process 'IdleShutdown.Agent' -ErrorAction SilentlyContinue
+
+if ($null -ne $interactiveShell -and $null -eq $agentProcess) {
+    $errors.Add(
+        'An interactive user is logged on, but IdleShutdown.Agent is not running. ' +
+        'Start the scheduled task or sign out and sign in again.')
+}
+
 if (Test-Path $configPath) {
     try {
         $config = Get-Content $configPath -Raw | ConvertFrom-Json

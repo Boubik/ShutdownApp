@@ -117,6 +117,16 @@ Existující konfigurace se při upgradu zachová. Parametr `/ResetConfig` ji ne
 idle-shutdown-test
 ```
 
+Pro ověření stavů doporučujeme nejprve použít `DryRun:true` a krátké timeouty:
+
+- po startu bez přihlášení musí timeout vyhodnotit stav `no logged-on user`;
+- po přihlášení a zamčení musí pohyb myši nebo stisk klávesy resetovat lock timer;
+- po odhlášení se lock timer zruší a začne nový `NoUserMinutes` timer.
+
+Agent při zamčení kontroluje session-specific input každých 250 ms a posílá
+službě pouze tiché resety timeru. Jednotlivé pohyby a stisky se proto do logu
+nezapisují.
+
 ## Odinstalace
 
 ```powershell

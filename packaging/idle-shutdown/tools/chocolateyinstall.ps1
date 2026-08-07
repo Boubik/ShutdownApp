@@ -160,5 +160,20 @@ finally {
 Install-BinFile -Name 'idle-shutdown-test' -Path (Join-Path $toolsDir 'idle-shutdown-test.cmd')
 Start-Service $serviceName
 
+# A logon trigger created during an already active session does not fire
+# retroactively. Start the agent immediately when an interactive user exists;
+# otherwise the task will start normally at the next logon.
+if (Get-Process 'explorer' -ErrorAction SilentlyContinue) {
+    try {
+        Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    }
+    catch {
+        Write-Warning (
+            'The agent could not be started in the current session. ' +
+            'It will start automatically at the next user logon. ' +
+            $_.Exception.Message)
+    }
+}
+
 Write-Host "Idle Shutdown installed. Configuration: $configPath"
 Write-Host "Log: $logPath"

@@ -5,11 +5,14 @@ namespace IdleShutdown.AgentApp;
 internal sealed class AgentApplicationContext : ApplicationContext
 {
     private const string PipeName = "IdleShutdown";
+    private const int LockedInputPollMilliseconds = 250;
 
     private readonly System.Windows.Forms.Timer _timer;
 
     private bool _warningVisible;
     private bool _presentationDeferralLogged;
+    private bool _wasWorkstationLocked;
+    private uint? _lastObservedInputTick;
 
     public AgentApplicationContext()
     {
@@ -26,25 +29,52 @@ internal sealed class AgentApplicationContext : ApplicationContext
         _timer.Tick += TimerOnTick;
         _timer.Start();
 
+        if (NativeMethods.TryGetLastInputTick(out var lastInputTick))
+        {
+            _lastObservedInputTick = lastInputTick;
+        }
+
         Log.Write(
             $"Agent started as " +
             $"{Environment.UserDomainName}\\" +
-            $"{Environment.UserName}.");
+            $"{Environment.UserName} in session " +
+            $"{System.Diagnostics.Process.GetCurrentProcess().SessionId}.");
     }
 
     private void TimerOnTick(
         object? sender,
         EventArgs e)
     {
-        if (
-            _warningVisible ||
-            NativeMethods.IsWorkstationLocked())
+        if (_warningVisible)
         {
             return;
         }
 
         var config =
             AppConfig.Load();
+
+        if (NativeMethods.IsWorkstationLocked())
+        {
+            MonitorLockedSessionInput();
+            return;
+        }
+
+        if (_wasWorkstationLocked)
+        {
+            _wasWorkstationLocked = false;
+            Log.Write(
+                "Workstation unlocked; lock-screen input " +
+                "monitoring stopped.");
+        }
+
+        _timer.Interval = Math.Max(
+            1,
+            config.CheckIntervalSeconds) * 1000;
+
+        if (NativeMethods.TryGetLastInputTick(out var observedInputTick))
+        {
+            _lastObservedInputTick = observedInputTick;
+        }
 
         var idle =
             NativeMethods.GetIdleTime();
@@ -110,6 +140,62 @@ internal sealed class AgentApplicationContext : ApplicationContext
         {
             _warningVisible = false;
             _timer.Start();
+        }
+    }
+
+    private void MonitorLockedSessionInput()
+    {
+        _timer.Interval = LockedInputPollMilliseconds;
+
+        if (!_wasWorkstationLocked)
+        {
+            _wasWorkstationLocked = true;
+            Log.Write(
+                "Workstation locked; session-specific lock-screen " +
+                "input monitoring started.");
+        }
+
+        if (!NativeMethods.TryGetLastInputTick(out var currentInputTick))
+        {
+            return;
+        }
+
+        if (
+            _lastObservedInputTick.HasValue &&
+            currentInputTick != _lastObservedInputTick.Value)
+        {
+            SendLockedInputNotification();
+        }
+
+        _lastObservedInputTick = currentInputTick;
+    }
+
+    private static void SendLockedInputNotification()
+    {
+        try
+        {
+            using var pipe = new NamedPipeClientStream(
+                ".",
+                PipeName,
+                PipeDirection.Out,
+                PipeOptions.Asynchronous);
+
+            pipe.Connect(750);
+
+            using var writer = new StreamWriter(pipe)
+            {
+                AutoFlush = true
+            };
+
+            var sessionId =
+                System.Diagnostics.Process.GetCurrentProcess().SessionId;
+
+            writer.WriteLine($"LOCK_INPUT:{sessionId}");
+        }
+        catch
+        {
+            // Lock-screen input is best-effort. WTS remains the fallback and
+            // failures must not display UI on the secure desktop.
         }
     }
 

@@ -71,6 +71,10 @@ Set-Content $tempXml $taskXml -Encoding Unicode
 schtasks.exe /Create /TN $TaskName /XML $tempXml /F | Out-Null
 Remove-Item $tempXml -Force
 
+if (Get-Process 'explorer' -ErrorAction SilentlyContinue) {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+}
+
 Write-Host '[OK] Testovací instalace dokončena.'
 Write-Host '[INFO] Výchozí konfigurace je DRY RUN – PC se zatím skutečně nevypne.'
 Write-Host '[INFO] Odhlaste/přihlaste uživatele nebo spusťte:'

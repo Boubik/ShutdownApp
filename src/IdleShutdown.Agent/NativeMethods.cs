@@ -39,10 +39,32 @@ internal static class NativeMethods
 
     public static TimeSpan GetIdleTime()
     {
-        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
-        if (!GetLastInputInfo(ref info)) return TimeSpan.Zero;
-        var elapsed = unchecked((uint)Environment.TickCount - info.dwTime);
+        if (!TryGetLastInputTick(out var lastInputTick))
+        {
+            return TimeSpan.Zero;
+        }
+
+        var elapsed = unchecked(
+            (uint)Environment.TickCount - lastInputTick);
+
         return TimeSpan.FromMilliseconds(elapsed);
+    }
+
+    public static bool TryGetLastInputTick(out uint lastInputTick)
+    {
+        var info = new LASTINPUTINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>()
+        };
+
+        if (!GetLastInputInfo(ref info))
+        {
+            lastInputTick = 0;
+            return false;
+        }
+
+        lastInputTick = info.dwTime;
+        return true;
     }
 
     public static bool IsWorkstationLocked()

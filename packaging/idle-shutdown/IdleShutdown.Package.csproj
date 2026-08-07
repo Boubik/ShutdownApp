@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Uses the current Idle Shutdown names and documents the service, agent, configuration, health check and package parameters.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) fixes lock-screen input resets through the session agent and starts the agent immediately when Chocolatey runs in an already active user session.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>

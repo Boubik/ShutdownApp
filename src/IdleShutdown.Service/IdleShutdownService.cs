@@ -374,21 +374,10 @@ internal sealed class IdleShutdownService : ServiceBase
                         4096,
                         CreatePipeSecurity());
 
-                Log.Write(
-                    $"Named pipe '{PipeName}' created; " +
-                    "waiting for an interactive agent.");
-
                 await pipe.WaitForConnectionAsync(token);
-
-                Log.Write(
-                    $"Client connected to named pipe '{PipeName}'.");
 
                 using var reader = new StreamReader(pipe);
                 var command = await reader.ReadLineAsync(token);
-
-                Log.Write(
-                    $"Named pipe command received: " +
-                    $"{command ?? "<null>"}");
 
                 if (
                     string.Equals(
@@ -405,6 +394,11 @@ internal sealed class IdleShutdownService : ServiceBase
                     RequestShutdown(
                         "interactive idle timeout",
                         config);
+                }
+                else if (TryHandleLockedInputCommand(command))
+                {
+                    // Input movement is intentionally not logged. It may be
+                    // reported many times while the lock screen is active.
                 }
                 else
                 {
@@ -433,6 +427,34 @@ internal sealed class IdleShutdownService : ServiceBase
                 }
             }
         }
+    }
+
+    private bool TryHandleLockedInputCommand(string? command)
+    {
+        const string prefix = "LOCK_INPUT:";
+
+        if (
+            command is null ||
+            !command.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(
+                command[prefix.Length..],
+                out var sessionId) ||
+            sessionId < 0)
+        {
+            return false;
+        }
+
+        lock (_sync)
+        {
+            if (_lockedSince.ContainsKey(sessionId))
+            {
+                _lockedSince[sessionId] = DateTime.UtcNow;
+            }
+        }
+
+        return true;
     }
 
     private static void RequestShutdown(
