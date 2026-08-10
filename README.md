@@ -12,7 +12,7 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 - Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce spustí celý timeout znovu.
 - Vypnutí ze zamčeného nebo nepřihlášeného stavu má navíc interní 60sekundovou ochrannou lhůtu. Nový vstup, přihlášení nebo odemknutí během ní vypnutí zruší. Teprve potom služba odešle nevnucené (`/t 0`, bez `/f`) vypnutí, takže Windows může upozornit na aplikaci s neuloženými daty.
 - Pokud je přihlášeno více uživatelů, zamčený timeout se použije pouze tehdy, když jsou zamčené nebo odpojené všechny jejich relace. Jedna aktivní odemčená relace vypnutí zablokuje.
-- Agent běží samostatně v každé lokální i RDP relaci. Popup se proto může zobrazit všem neaktivním uživatelům, ale nový vstup nebo tlačítko „pokračovat“ v jedné relaci zruší vypnutí a zavře popup ve všech ostatních relacích. Požadavek jedné neaktivní relace služba odmítne, pokud je jiná odemčená relace stále aktivní.
+- Agent běží samostatně v každé lokální i RDP relaci. Popup se proto může zobrazit všem neaktivním uživatelům, ale nový vstup nebo tlačítko „pokračovat“ v jedné relaci zruší vypnutí a zavře popup ve všech ostatních relacích. Pokud odpočty nezačnou přesně současně, služba čeká na ten, který skončí nejpozději. Požadavek jedné neaktivní relace služba odmítne, pokud je jiná odemčená relace stále aktivní.
 - `PauseWhenFullscreen`: před varováním se kontrolují systémové power/execution requests a poté skutečný fullscreen foreground okna.
 - Bezprostředně před každým vypnutím služba kontroluje systémové power requests, aktivní instalaci Windows Update a aktivní MSI transakci. Dokud aktivita trvá, požadavek odloží a kontrolu opakuje; nový fyzický vstup mezitím požadavek zruší. Samotný stav „čeká se na restart“ vypnutí neblokuje, aby Windows mohl aktualizaci dokončit.
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
@@ -76,6 +76,7 @@ bezpečně vyčistí.
 Aktuální verze projektu je uložena pouze v kořenovém souboru `VERSION`.
 Tuto hodnotu automaticky používají assembly služby i agenta a Chocolatey
 balíček. Před vydáním nové verze tedy stačí změnit právě tento soubor.
+Hotové změny jednotlivých verzí jsou vedené v `CHANGELOG.md`.
 
 Po pushnutí změny souboru `VERSION` do větve `main` spustí GitHub Actions
 automaticky testy a kompletní Windows build. Workflow ověří shodu verze v

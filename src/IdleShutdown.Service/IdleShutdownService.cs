@@ -11,6 +11,7 @@ internal sealed class IdleShutdownService : ServiceBase
     private const string PipeName = "IdleShutdown";
     private const int MachineStateShutdownGraceSeconds = 60;
     private const int AgentSessionStateFreshSeconds = 30;
+    private const int InteractiveCoordinationSafetySeconds = 3;
 
     private readonly object _sync = new();
     private readonly object _activitySync = new();
@@ -20,6 +21,7 @@ internal sealed class IdleShutdownService : ServiceBase
     private readonly Dictionary<int, int> _lockedPipeResetCount = new();
     private readonly Dictionary<int, AgentSessionState> _agentSessionStates =
         new();
+    private readonly Dictionary<int, DateTime> _warningDeadlines = new();
     private readonly NoUserActivityTracker _noUserTracker = new();
     private readonly ConsoleInputMonitorLauncher _inputMonitor = new();
 
@@ -118,6 +120,9 @@ internal sealed class IdleShutdownService : ServiceBase
             {
                 case SessionChangeReason.SessionLock:
                 case SessionChangeReason.RemoteDisconnect:
+                    cancelPendingShutdown = true;
+                    _warningDeadlines.Clear();
+
                     _agentSessionStates[changeDescription.SessionId] =
                         new AgentSessionState(
                             true,
@@ -141,6 +146,7 @@ internal sealed class IdleShutdownService : ServiceBase
                 case SessionChangeReason.SessionUnlock:
                 case SessionChangeReason.SessionLogon:
                     cancelPendingShutdown = true;
+                    _warningDeadlines.Clear();
 
                     _agentSessionStates[changeDescription.SessionId] =
                         new AgentSessionState(
@@ -170,6 +176,9 @@ internal sealed class IdleShutdownService : ServiceBase
                     break;
 
                 case SessionChangeReason.SessionLogoff:
+                    cancelPendingShutdown = true;
+                    _warningDeadlines.Clear();
+
                     _agentSessionStates.Remove(
                         changeDescription.SessionId);
 
@@ -775,6 +784,11 @@ internal sealed class IdleShutdownService : ServiceBase
                 {
                     // Per-session state heartbeats are intentionally silent.
                 }
+                else if (TryHandleWarningActiveCommand(command))
+                {
+                    // Active warning deadlines are logged only when they
+                    // actually delay a shutdown request.
+                }
                 else if (TryHandleSessionInputCommand(command))
                 {
                     // Interactive input is intentionally not logged per event.
@@ -880,6 +894,71 @@ internal sealed class IdleShutdownService : ServiceBase
         }
 
         HandleSessionInput(sessionId, isLocked: false);
+        return true;
+    }
+
+    private bool TryHandleWarningActiveCommand(string? command)
+    {
+        const string prefix = "WARNING_ACTIVE:";
+
+        if (
+            command is null ||
+            !command.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parts = command[prefix.Length..].Split(':');
+
+        if (
+            parts.Length != 2 ||
+            !int.TryParse(parts[0], out var sessionId) ||
+            sessionId < 0 ||
+            !long.TryParse(parts[1], out var deadlineTicks))
+        {
+            return false;
+        }
+
+        DateTime deadlineUtc;
+
+        try
+        {
+            deadlineUtc = new DateTime(deadlineTicks, DateTimeKind.Utc);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (
+            deadlineUtc <= now ||
+            deadlineUtc > now.AddDays(1))
+        {
+            return false;
+        }
+
+        lock (_sync)
+        {
+            _warningDeadlines[sessionId] = deadlineUtc;
+
+            if (
+                _pendingShutdown is
+                {
+                    Kind: PendingShutdownKind.Interactive
+                } pending &&
+                deadlineUtc > pending.ExecuteAtUtc)
+            {
+                _pendingShutdown = pending with
+                {
+                    ExecuteAtUtc = deadlineUtc
+                };
+            }
+        }
+
         return true;
     }
 
@@ -1006,6 +1085,8 @@ internal sealed class IdleShutdownService : ServiceBase
 
         lock (_sync)
         {
+            _warningDeadlines.Clear();
+
             if (isLocked.HasValue)
             {
                 _agentSessionStates[sessionId] = new AgentSessionState(
@@ -1202,6 +1283,29 @@ internal sealed class IdleShutdownService : ServiceBase
             return false;
         }
 
+        if (pending.Kind == PendingShutdownKind.Interactive)
+        {
+            var latestWarningDeadline =
+                GetLatestActiveWarningDeadline();
+
+            if (
+                latestWarningDeadline.HasValue &&
+                latestWarningDeadline.Value > pending.ExecuteAtUtc)
+            {
+                lock (_sync)
+                {
+                    if (_pendingShutdown == pending)
+                    {
+                        pending = pending with
+                        {
+                            ExecuteAtUtc = latestWarningDeadline.Value
+                        };
+                        _pendingShutdown = pending;
+                    }
+                }
+            }
+        }
+
         if (DateTime.UtcNow < pending.ExecuteAtUtc)
         {
             return true;
@@ -1266,49 +1370,86 @@ internal sealed class IdleShutdownService : ServiceBase
             return;
         }
 
+        var latestWarningDeadline = GetLatestActiveWarningDeadline();
+        var minimumCoordinationDeadline = DateTime.UtcNow.AddSeconds(
+            config.CheckIntervalSeconds +
+            InteractiveCoordinationSafetySeconds);
+        var coordinationDeadline =
+            latestWarningDeadline.HasValue &&
+            latestWarningDeadline.Value > minimumCoordinationDeadline
+                ? latestWarningDeadline.Value
+                : minimumCoordinationDeadline;
+
         if (config.DryRun)
         {
-            if (ShouldDeferForSystemActivity(reason))
+            Log.Write(
+                "DRY RUN: shutdown skipped; production would wait " +
+                "for all warning dialogs until at least " +
+                $"{coordinationDeadline:O} ({reason}).");
+            return;
+        }
+
+        DateTime effectiveDeadline;
+
+        lock (_sync)
+        {
+            if (
+                _pendingShutdown is
+                {
+                    Kind: PendingShutdownKind.Interactive
+                } existingPending)
+            {
+                if (
+                    latestWarningDeadline.HasValue &&
+                    latestWarningDeadline.Value >
+                        existingPending.ExecuteAtUtc)
+                {
+                    existingPending = existingPending with
+                    {
+                        ExecuteAtUtc = latestWarningDeadline.Value
+                    };
+                    _pendingShutdown = existingPending;
+                }
+
+                effectiveDeadline = existingPending.ExecuteAtUtc;
+            }
+            else if (_pendingShutdown is null)
+            {
+                _pendingShutdown = new PendingShutdown(
+                    PendingShutdownKind.Interactive,
+                    null,
+                    reason,
+                    coordinationDeadline);
+                effectiveDeadline = coordinationDeadline;
+            }
+            else
             {
                 return;
             }
-
-            Log.Write(
-                $"DRY RUN: shutdown skipped ({reason}).");
-            return;
         }
 
-        if (ShouldDeferForSystemActivity(reason))
+        Log.Write(
+            "Interactive shutdown is waiting for all warning " +
+            $"dialogs until at least {effectiveDeadline:O}.");
+    }
+
+    private DateTime? GetLatestActiveWarningDeadline()
+    {
+        var now = DateTime.UtcNow;
+
+        lock (_sync)
         {
-            lock (_sync)
+            foreach (var expiredSessionId in _warningDeadlines
+                         .Where(pair => pair.Value <= now)
+                         .Select(pair => pair.Key)
+                         .ToArray())
             {
-                _pendingShutdown ??= new PendingShutdown(
-                    PendingShutdownKind.Interactive,
-                    null,
-                    reason,
-                    DateTime.UtcNow.AddMinutes(1));
+                _warningDeadlines.Remove(expiredSessionId);
             }
 
-            return;
-        }
-
-        if (ExecuteShutdown(reason))
-        {
-            lock (_sync)
-            {
-                _shutdownCommandIssued = true;
-            }
-        }
-        else
-        {
-            lock (_sync)
-            {
-                _pendingShutdown ??= new PendingShutdown(
-                    PendingShutdownKind.Interactive,
-                    null,
-                    reason,
-                    DateTime.UtcNow.AddMinutes(1));
-            }
+            return WarningCoordinationPolicy.GetLatestActiveDeadline(
+                _warningDeadlines.Values,
+                now);
         }
     }
 

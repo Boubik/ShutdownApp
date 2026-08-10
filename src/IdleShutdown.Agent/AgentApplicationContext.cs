@@ -8,6 +8,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
     private const int LockedInputPollMilliseconds = 250;
     private const int SessionStateHeartbeatSeconds = 10;
     private const int SessionStateRetrySeconds = 2;
+    private const int WarningCoordinationSafetySeconds = 3;
 
     private readonly System.Windows.Forms.Timer _timer;
     private readonly int _sessionId;
@@ -179,6 +180,16 @@ internal sealed class AgentApplicationContext : ApplicationContext
                 $"Idle timeout reached after " +
                 $"{inputAtStart.TotalSeconds:F0} second(s); " +
                 $"showing a {config.WarningSeconds}-second warning.");
+
+            var coordinatedWarningDeadlineUtc = DateTime.UtcNow.AddSeconds(
+                config.WarningSeconds + WarningCoordinationSafetySeconds);
+
+            if (!SendWarningActive(coordinatedWarningDeadlineUtc))
+            {
+                Log.Write(
+                    "Warning coordination heartbeat could not be sent; " +
+                    "the service will still apply its local safety checks.");
+            }
 
             using var dialog =
                 new WarningForm(
@@ -436,6 +447,27 @@ internal sealed class AgentApplicationContext : ApplicationContext
             ui.WindowTitle,
             MessageBoxButtons.OK,
             MessageBoxIcon.Error);
+
+        return false;
+    }
+
+    private bool SendWarningActive(DateTime deadlineUtc)
+    {
+        var command =
+            $"WARNING_ACTIVE:{_sessionId}:{deadlineUtc.Ticks}";
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            if (SendQuietCommand(command, out _))
+            {
+                return true;
+            }
+
+            if (attempt < 3)
+            {
+                Thread.Sleep(100);
+            }
+        }
 
         return false;
     }

@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
-    <PackageReleaseNotes>Version $(Version) fixes local plus Remote Desktop multi-user operation: one agent now runs in every session, activity is synchronized machine-wide, warning dialogs close across sessions, active users block idle shutdown requests, and fresh agent state prevents unlocked RDP sessions from being mistaken for locked sessions.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) coordinates warning countdowns across local and Remote Desktop sessions. The service now waits for the latest visible warning to expire, while input in any session cancels every warning and the shared pending shutdown.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>
@@ -24,6 +24,7 @@
     <None Include="..\..\dist\Agent\**" Pack="true" PackagePath="tools\dist\Agent" />
     <None Include="..\..\config.json" Pack="true" PackagePath="tools\dist\config.json" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <Target Name="RemovePreviousPackages" BeforeTargets="GenerateNuspec">

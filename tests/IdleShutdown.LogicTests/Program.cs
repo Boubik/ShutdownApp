@@ -199,6 +199,28 @@ var tests = new (string Name, Action Run)[]
                 now,
                 TimeSpan.FromSeconds(30),
                 TimeSpan.FromMinutes(1)));
+    }),
+
+    ("shutdown waits for the latest warning deadline", () =>
+    {
+        var now = Utc(100);
+
+        Expect(
+            Utc(110),
+            WarningCoordinationPolicy.GetLatestActiveDeadline(
+                [Utc(105), Utc(110), Utc(99)],
+                now)!.Value);
+    }),
+
+    ("expired warning deadlines do not delay shutdown", () =>
+    {
+        var now = Utc(100);
+
+        Expect<DateTime?>(
+            null,
+            WarningCoordinationPolicy.GetLatestActiveDeadline(
+                [Utc(90), Utc(100)],
+                now));
     })
 };
 
@@ -235,7 +257,6 @@ static TimeSpan Minutes(int minutes) =>
     TimeSpan.FromMinutes(minutes);
 
 static void Expect<T>(T expected, T actual)
-    where T : notnull
 {
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
     {
