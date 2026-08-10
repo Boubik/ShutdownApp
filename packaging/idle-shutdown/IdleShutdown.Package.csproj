@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
-    <PackageReleaseNotes>Version $(Version) makes service/WTS lock observations authoritative, prevents RDP or driver SYSTEM-only execution requests from blocking shutdown indefinitely, and keeps DISPLAY/fullscreen, Windows Update and MSI protection.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) prevents an unexpectedly closed warning dialog from resetting the complete inactivity timer, requires verified input for cancellation, and records the exact cancellation category in the log.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>

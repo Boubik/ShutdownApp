@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2
+
+- Resets the complete inactivity timer only after a verified local input tick change, the Continue button, or verified activity from another session.
+- Prevents an unexpectedly closed warning dialog from being mistaken for user activity and adding another complete `IdleMinutes` period.
+- Logs the exact warning cancellation category to make fleet diagnostics unambiguous.
+
 ## 1.3.1
 
 - Makes Windows service/WTS lock and disconnect observations authoritative over an unreliable agent `UNLOCKED` heartbeat.

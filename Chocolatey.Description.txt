@@ -3,7 +3,7 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 ## Features
 
 - Displays a warning dialog after a configurable period of inactivity in an unlocked user session.
-- Cancels the pending shutdown immediately when the user moves the mouse, presses a key or clicks **Continue working**.
+- Cancels the pending shutdown only after verified mouse/keyboard input or the **Continue working** button; an unexpectedly closed dialog cannot reset the complete inactivity timer.
 - Uses one `IdleMinutes` inactivity timeout for unlocked, locked and no-user states, followed by one shared `WarningSeconds` protection period.
 - Detects mouse and keyboard activity on the Windows lock screen and resets the locked-session timer.
 - Detects mouse and keyboard activity on the Windows sign-in screen before any user logs on and resets the no-user timer.

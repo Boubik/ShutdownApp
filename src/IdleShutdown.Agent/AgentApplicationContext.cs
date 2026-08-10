@@ -187,6 +187,10 @@ internal sealed class AgentApplicationContext : ApplicationContext
         {
             var inputAtStart =
                 NativeMethods.GetIdleTime();
+            uint? inputTickAtStart =
+                NativeMethods.TryGetLastInputTick(out var warningInputTick)
+                    ? warningInputTick
+                    : null;
 
             if (!sharedWarningDeadlineUtc.HasValue)
             {
@@ -211,7 +215,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
             using var dialog =
                 new WarningForm(
                     visibleWarningSeconds,
-                    inputAtStart);
+                    inputTickAtStart);
 
             var result =
                 dialog.ShowDialog();
@@ -234,15 +238,35 @@ internal sealed class AgentApplicationContext : ApplicationContext
                     _inputTickAtExpiredWarning = null;
                 }
             }
-            else
+            else if (
+                dialog.CancellationReason is
+                    WarningCancellationReason.LocalInput or
+                    WarningCancellationReason.ContinueButton)
             {
                 SendQuietCommand(
                     $"SESSION_INPUT:{_sessionId}",
                     out _);
 
                 Log.Write(
-                    "Shutdown warning cancelled by user " +
-                    "activity or button.");
+                    "Shutdown warning cancelled by verified local " +
+                    (dialog.CancellationReason ==
+                        WarningCancellationReason.ContinueButton
+                            ? "Continue button input."
+                            : "keyboard or mouse input."));
+            }
+            else if (
+                dialog.CancellationReason ==
+                WarningCancellationReason.MachineActivity)
+            {
+                Log.Write(
+                    "Shutdown warning cancelled by verified activity " +
+                    "in another session or a machine-state change.");
+            }
+            else
+            {
+                Log.Write(
+                    "Shutdown warning closed without verified user " +
+                    "activity; the inactivity timer was not reset.");
             }
         }
         finally

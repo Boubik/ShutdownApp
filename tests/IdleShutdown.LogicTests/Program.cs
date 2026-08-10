@@ -308,6 +308,22 @@ var tests = new (string Name, Action Run)[]
                 30,
                 Utc(106),
                 Utc(100)));
+    }),
+
+    ("warning cancellation requires a changed input tick", () =>
+    {
+        Expect(
+            false,
+            WarningDisplayPolicy.HasVerifiedLocalInput(null, 20));
+        Expect(
+            false,
+            WarningDisplayPolicy.HasVerifiedLocalInput(20, null));
+        Expect(
+            false,
+            WarningDisplayPolicy.HasVerifiedLocalInput(20, 20));
+        Expect(
+            true,
+            WarningDisplayPolicy.HasVerifiedLocalInput(20, 21));
     })
 };
 

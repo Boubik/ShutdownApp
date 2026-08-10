@@ -2,6 +2,16 @@ namespace IdleShutdown.AgentApp;
 
 internal static class WarningDisplayPolicy
 {
+    public static bool HasVerifiedLocalInput(
+        uint? inputTickAtStart,
+        uint? currentInputTick)
+    {
+        return
+            inputTickAtStart.HasValue &&
+            currentInputTick.HasValue &&
+            inputTickAtStart.Value != currentInputTick.Value;
+    }
+
     public static bool ShouldShow(
         TimeSpan idle,
         int idleMinutes,

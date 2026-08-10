@@ -3,10 +3,18 @@ using System.Drawing.Drawing2D;
 
 namespace IdleShutdown.AgentApp;
 
+internal enum WarningCancellationReason
+{
+    None,
+    LocalInput,
+    ContinueButton,
+    MachineActivity
+}
+
 internal sealed class WarningForm : Form
 {
     private readonly int _warningSeconds;
-    private readonly TimeSpan _idleAtStart;
+    private readonly uint? _inputTickAtStart;
     private readonly Stopwatch _countdown = Stopwatch.StartNew();
     private readonly System.Windows.Forms.Timer _timer;
     private readonly UiStrings _ui;
@@ -22,10 +30,10 @@ internal sealed class WarningForm : Form
 
     public WarningForm(
         int warningSeconds,
-        TimeSpan idleAtStart)
+        uint? inputTickAtStart)
     {
         _warningSeconds = Math.Max(1, warningSeconds);
-        _idleAtStart = idleAtStart;
+        _inputTickAtStart = inputTickAtStart;
         _ui = LocalizedText.Current;
         _palette = UiTheme.Current;
         _machineActivityVersion = MachineActivitySignal.ReadVersion();
@@ -172,7 +180,9 @@ internal sealed class WarningForm : Form
             _palette.AccentHover;
         _continueButton.FlatAppearance.MouseDownBackColor =
             _palette.AccentHover;
-        _continueButton.Click += (_, _) => CancelShutdown();
+        _continueButton.Click += (_, _) =>
+            CancelShutdown(
+                WarningCancellationReason.ContinueButton);
         card.Controls.Add(_continueButton);
 
         var versionLabel = new Label
@@ -228,8 +238,15 @@ internal sealed class WarningForm : Form
         KeyDown += (_, e) =>
         {
             e.SuppressKeyPress = true;
-            CancelShutdown();
+            CancelShutdown(
+                WarningCancellationReason.LocalInput);
         };
+    }
+
+    public WarningCancellationReason CancellationReason
+    {
+        get;
+        private set;
     }
 
     protected override void OnFormClosing(
@@ -250,17 +267,22 @@ internal sealed class WarningForm : Form
             currentMachineActivityVersion != 0 &&
             currentMachineActivityVersion != _machineActivityVersion)
         {
-            CancelShutdown();
+            CancelShutdown(
+                WarningCancellationReason.MachineActivity);
             return;
         }
 
-        var currentIdle = NativeMethods.GetIdleTime();
+        uint? currentInputTick =
+            NativeMethods.TryGetLastInputTick(out var observedInputTick)
+                ? observedInputTick
+                : null;
 
-        if (
-            currentIdle + TimeSpan.FromMilliseconds(750) <
-            _idleAtStart)
+        if (WarningDisplayPolicy.HasVerifiedLocalInput(
+                _inputTickAtStart,
+                currentInputTick))
         {
-            CancelShutdown();
+            CancelShutdown(
+                WarningCancellationReason.LocalInput);
             return;
         }
 
@@ -311,9 +333,11 @@ internal sealed class WarningForm : Form
         }
     }
 
-    private void CancelShutdown()
+    private void CancelShutdown(
+        WarningCancellationReason reason)
     {
         _timer.Stop();
+        CancellationReason = reason;
         DialogResult = DialogResult.Cancel;
         Close();
     }
