@@ -5,11 +5,12 @@ $installDir = Join-Path $env:ProgramFiles 'IdleShutdown'
 $dataDir = Join-Path $env:ProgramData 'IdleShutdown'
 $configPath = Join-Path $dataDir 'config.json'
 $logPath = Join-Path $dataDir 'IdleShutdown.log'
+$agentPath = Join-Path $installDir 'IdleShutdown.Agent.exe'
 $errors = [System.Collections.Generic.List[string]]::new()
 
 foreach ($path in @(
     (Join-Path $installDir 'IdleShutdown.Service.exe'),
-    (Join-Path $installDir 'IdleShutdown.Agent.exe'),
+    $agentPath,
     $configPath,
     $logPath
 )) {
@@ -32,6 +33,42 @@ if ($null -eq $task) {
 }
 elseif ($task.State -eq 'Disabled') {
     $errors.Add('Scheduled task Idle Shutdown Agent is disabled.')
+}
+
+$inventoryBaseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+    [Microsoft.Win32.RegistryHive]::LocalMachine,
+    [Microsoft.Win32.RegistryView]::Registry64)
+
+try {
+    $inventoryKey = $inventoryBaseKey.OpenSubKey(
+        'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown')
+
+    if ($null -eq $inventoryKey) {
+        $errors.Add('Windows installed-software inventory entry is missing.')
+    }
+    else {
+        try {
+            if ($inventoryKey.GetValue('DisplayName') -ne 'Idle Shutdown') {
+                $errors.Add('Windows software inventory display name is invalid.')
+            }
+
+            if ([string]::IsNullOrWhiteSpace(
+                    [string] $inventoryKey.GetValue('DisplayVersion'))) {
+                $errors.Add('Windows software inventory version is missing.')
+            }
+
+            if ([string]::IsNullOrWhiteSpace(
+                    [string] $inventoryKey.GetValue('QuietUninstallString'))) {
+                $errors.Add('Windows software inventory uninstall command is missing.')
+            }
+        }
+        finally {
+            $inventoryKey.Dispose()
+        }
+    }
+}
+finally {
+    $inventoryBaseKey.Dispose()
 }
 
 $interactiveShell = Get-Process 'explorer' -ErrorAction SilentlyContinue

@@ -12,6 +12,58 @@ $serviceName = 'IdleShutdown'
 $taskName = 'Idle Shutdown Agent'
 $parameters = Get-PackageParameters
 
+function Set-SoftwareInventoryEntry {
+    param(
+        [string] $InstalledAgentExe
+    )
+
+    $packageVersion = [string] $env:ChocolateyPackageVersion
+    if ([string]::IsNullOrWhiteSpace($packageVersion)) {
+        $packageVersion = (Get-Item $InstalledAgentExe).VersionInfo.FileVersion
+        $packageVersion = $packageVersion -replace '\.0$', ''
+    }
+
+    $chocoExe = Join-Path $env:ChocolateyInstall 'bin\choco.exe'
+    $uninstallCommand = "`"$chocoExe`" uninstall idle-shutdown -y"
+    $estimatedSizeBytes = (
+        Get-ChildItem $installDir -File -Recurse |
+            Measure-Object -Property Length -Sum
+    ).Sum
+    $estimatedSizeKb = [Math]::Max(
+        1,
+        [int][Math]::Ceiling($estimatedSizeBytes / 1KB))
+
+    $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+        [Microsoft.Win32.RegistryHive]::LocalMachine,
+        [Microsoft.Win32.RegistryView]::Registry64)
+
+    try {
+        $inventoryKey = $baseKey.CreateSubKey(
+            'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown')
+
+        try {
+            $inventoryKey.SetValue('DisplayName', 'Idle Shutdown', [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('DisplayVersion', $packageVersion, [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('Publisher', 'Boubik', [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('InstallDate', (Get-Date -Format 'yyyyMMdd'), [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('InstallLocation', $installDir, [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('DisplayIcon', "`"$InstalledAgentExe`",0", [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('UninstallString', $uninstallCommand, [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('QuietUninstallString', $uninstallCommand, [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('URLInfoAbout', 'https://github.com/boubik/shutdownapp', [Microsoft.Win32.RegistryValueKind]::String)
+            $inventoryKey.SetValue('EstimatedSize', $estimatedSizeKb, [Microsoft.Win32.RegistryValueKind]::DWord)
+            $inventoryKey.SetValue('NoModify', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+            $inventoryKey.SetValue('NoRepair', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+        }
+        finally {
+            $inventoryKey.Dispose()
+        }
+    }
+    finally {
+        $baseKey.Dispose()
+    }
+}
+
 function Get-PositiveIntegerParameter {
     param(
         [string] $Name,
@@ -187,6 +239,7 @@ finally {
 
 Install-BinFile -Name 'idle-shutdown-test' -Path (Join-Path $toolsDir 'idle-shutdown-test.cmd')
 Start-Service $serviceName
+Set-SoftwareInventoryEntry -InstalledAgentExe $installedAgentExe
 
 # A logon trigger created during an already active session does not fire
 # retroactively. Start the agent immediately when an interactive user exists;

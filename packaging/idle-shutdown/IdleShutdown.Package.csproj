@@ -4,16 +4,17 @@
     <IsPackable>true</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
 
     <PackageId>idle-shutdown</PackageId>
     <Title>Idle Shutdown for Windows</Title>
-    <Authors>Idle Shutdown maintainers</Authors>
+    <Authors>Boubik</Authors>
     <Description>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\Chocolatey.Description.txt').Trim())</Description>
     <Summary>Unified inactivity shutdown with multi-session warnings for centrally managed Windows computers.</Summary>
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
-    <PackageReleaseNotes>Version $(Version) keeps the warning above ordinary applications without repeatedly stealing focus and treats a foreground installer/updater as protected activity that postpones the warning.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) registers Idle Shutdown in the standard 64-bit Windows installed-software inventory so Tactical RMM and similar tools can report its version and invoke its silent Chocolatey uninstall command.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>

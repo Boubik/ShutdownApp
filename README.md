@@ -111,6 +111,12 @@ Start-ScheduledTask -TaskName 'Idle Shutdown Agent'
 ## Chocolatey
 
 Hlavní `build.sh` a `build.bat` vytvářejí Chocolatey balíček automaticky.
+Instalace se také registruje do standardního 64bitového Windows seznamu
+nainstalovaného softwaru jako `Idle Shutdown`. Tactical RMM a podobné nástroje
+tak mohou zobrazit verzi, cestu a vydavatele a použít tichý příkaz
+`choco uninstall idle-shutdown -y`. Odinstalace odstraní službu, agenta,
+scheduled task i inventární záznam; konfigurace a logy v `ProgramData` zůstávají
+záměrně zachované.
 Pokud už jsou aplikace v `dist` sestavené a chcete znovu vytvořit pouze
 balíček, lze na Windows použít:
 

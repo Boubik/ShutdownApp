@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.4
+
+- Registers Idle Shutdown in the 64-bit Windows installed-software inventory for Tactical RMM and other management tools.
+- Publishes display name, version, publisher `Boubik`, installation path, icon and estimated size through the standard uninstall registry entry.
+- Provides a silent uninstall command that delegates to the existing Chocolatey uninstall workflow and removes the inventory entry cleanly.
+- Disables Chocolatey automatic-uninstaller recursion for the self-referencing inventory command.
+
 ## 1.3.3
 
 - Periodically restores the warning dialog to the top of the Windows topmost band so Explorer, installer and updater windows cannot cover it.

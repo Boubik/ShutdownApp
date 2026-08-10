@@ -33,6 +33,7 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Prevents repeated expired DryRun warning dialogs until new physical input is detected.
 - Preserves the existing configuration during Chocolatey upgrades unless `/ResetConfig` is supplied.
 - Includes the remote-friendly `idle-shutdown-test` health-check command.
+- Registers in the standard 64-bit Windows installed-software inventory so Tactical RMM and similar tools can report and silently uninstall it through Chocolatey.
 
 ## Installed components
 
@@ -41,6 +42,7 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Installation directory: `C:\Program Files\IdleShutdown`
 - Configuration: `C:\ProgramData\IdleShutdown\config.json`
 - Log: `C:\ProgramData\IdleShutdown\IdleShutdown.log`
+- Windows installed-app entry: `Idle Shutdown` with a silent Chocolatey uninstall command
 
 ## Default configuration
 
