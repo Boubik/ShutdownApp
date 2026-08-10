@@ -48,10 +48,18 @@ $interactiveAgent = @(
             $_.CommandLine -notmatch '--machine-input-monitor'
         })
 
-if ($null -ne $interactiveShell -and $interactiveAgent.Count -eq 0) {
-    $errors.Add(
-        'An interactive user is logged on, but IdleShutdown.Agent is not running. ' +
-        'Start the scheduled task or sign out and sign in again.')
+if ($null -ne $interactiveShell) {
+    $agentSessionIds = @(
+        $interactiveAgent |
+            Select-Object -ExpandProperty SessionId -Unique)
+
+    foreach ($sessionId in $interactiveSessionIds) {
+        if ($sessionId -notin $agentSessionIds) {
+            $errors.Add(
+                "Interactive session $sessionId has no IdleShutdown.Agent. " +
+                'Sign that user out and in again before production use.')
+        }
+    }
 }
 
 if (Test-Path $configPath) {

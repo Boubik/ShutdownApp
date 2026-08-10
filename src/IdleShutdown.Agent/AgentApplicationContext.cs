@@ -6,8 +6,11 @@ internal sealed class AgentApplicationContext : ApplicationContext
 {
     private const string PipeName = "IdleShutdown";
     private const int LockedInputPollMilliseconds = 250;
+    private const int SessionStateHeartbeatSeconds = 10;
+    private const int SessionStateRetrySeconds = 2;
 
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly int _sessionId;
 
     private bool _warningVisible;
     private bool _waitingForInputAfterExpiredWarning;
@@ -19,9 +22,16 @@ internal sealed class AgentApplicationContext : ApplicationContext
     private int _lockInputChanges;
     private int _lockPipeSuccesses;
     private string? _lastLockPipeError;
+    private bool? _lastReportedLockedState;
+    private DateTime? _lastSessionStateReportUtc;
+    private DateTime? _lastSessionStateAttemptUtc;
 
     public AgentApplicationContext()
     {
+        _sessionId = System.Diagnostics.Process
+            .GetCurrentProcess()
+            .SessionId;
+
         var config = AppConfig.Load();
 
         _timer = new System.Windows.Forms.Timer
@@ -44,7 +54,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
             $"Agent started as " +
             $"{Environment.UserDomainName}\\" +
             $"{Environment.UserName} in session " +
-            $"{System.Diagnostics.Process.GetCurrentProcess().SessionId}.");
+            $"{_sessionId}.");
     }
 
     private void TimerOnTick(
@@ -65,7 +75,10 @@ internal sealed class AgentApplicationContext : ApplicationContext
             return;
         }
 
-        if (NativeMethods.IsWorkstationLocked())
+        var isWorkstationLocked = NativeMethods.IsWorkstationLocked();
+        ReportSessionState(isWorkstationLocked);
+
+        if (isWorkstationLocked)
         {
             MonitorLockedSessionInput(config.DryRun);
             return;
@@ -90,7 +103,18 @@ internal sealed class AgentApplicationContext : ApplicationContext
 
         if (NativeMethods.TryGetLastInputTick(out var observedInputTick))
         {
+            var inputChanged =
+                _lastObservedInputTick.HasValue &&
+                observedInputTick != _lastObservedInputTick.Value;
+
             _lastObservedInputTick = observedInputTick;
+
+            if (inputChanged)
+            {
+                SendQuietCommand(
+                    $"SESSION_INPUT:{_sessionId}",
+                    out _);
+            }
 
             if (_waitingForInputAfterExpiredWarning)
             {
@@ -110,8 +134,13 @@ internal sealed class AgentApplicationContext : ApplicationContext
             return;
         }
 
-        var idle =
-            NativeMethods.GetIdleTime();
+        var idle = NativeMethods.GetIdleTime();
+        var machineIdle = MachineActivitySignal.GetIdleTime();
+
+        if (machineIdle.HasValue && machineIdle.Value < idle)
+        {
+            idle = machineIdle.Value;
+        }
 
         if (!IdleThreshold.IsReached(
                 idle,
@@ -179,6 +208,10 @@ internal sealed class AgentApplicationContext : ApplicationContext
             }
             else
             {
+                SendQuietCommand(
+                    $"SESSION_INPUT:{_sessionId}",
+                    out _);
+
                 Log.Write(
                     "Shutdown warning cancelled by user " +
                     "activity or button.");
@@ -214,7 +247,9 @@ internal sealed class AgentApplicationContext : ApplicationContext
         {
             _lockInputChanges++;
 
-            if (SendLockedInputNotification(out var error))
+            if (SendQuietCommand(
+                    $"LOCK_INPUT:{_sessionId}",
+                    out var error))
             {
                 _lockPipeSuccesses++;
             }
@@ -253,7 +288,50 @@ internal sealed class AgentApplicationContext : ApplicationContext
         _lastLockPipeError = null;
     }
 
-    private static bool SendLockedInputNotification(out string? error)
+    private void ReportSessionState(bool isLocked)
+    {
+        var now = DateTime.UtcNow;
+        var stateChanged = _lastReportedLockedState != isLocked;
+
+        if (
+            !stateChanged &&
+            _lastSessionStateReportUtc.HasValue &&
+            now - _lastSessionStateReportUtc.Value <
+            TimeSpan.FromSeconds(SessionStateHeartbeatSeconds))
+        {
+            return;
+        }
+
+        if (
+            _lastSessionStateAttemptUtc.HasValue &&
+            now - _lastSessionStateAttemptUtc.Value <
+            TimeSpan.FromSeconds(SessionStateRetrySeconds))
+        {
+            return;
+        }
+
+        _lastSessionStateAttemptUtc = now;
+
+        var idleSeconds = Math.Max(
+            0,
+            NativeMethods.GetIdleTime().TotalSeconds);
+
+        if (!SendQuietCommand(
+                $"SESSION_STATE:{_sessionId}:" +
+                (isLocked ? "LOCKED" : "UNLOCKED") +
+                $":{idleSeconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)}",
+                out _))
+        {
+            return;
+        }
+
+        _lastReportedLockedState = isLocked;
+        _lastSessionStateReportUtc = now;
+    }
+
+    private static bool SendQuietCommand(
+        string command,
+        out string? error)
     {
         try
         {
@@ -270,18 +348,15 @@ internal sealed class AgentApplicationContext : ApplicationContext
                 AutoFlush = true
             };
 
-            var sessionId =
-                System.Diagnostics.Process.GetCurrentProcess().SessionId;
-
-            writer.WriteLine($"LOCK_INPUT:{sessionId}");
+            writer.WriteLine(command);
 
             error = null;
             return true;
         }
         catch (Exception ex)
         {
-            // Lock-screen input is best-effort. WTS remains the fallback and
-            // failures must not display UI on the secure desktop.
+            // State and input reporting are best-effort. WTS remains the
+            // fallback and failures must not display UI to the user.
             error = $"{ex.GetType().Name}: {ex.Message}";
             return false;
         }

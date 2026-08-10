@@ -10,6 +10,7 @@ internal sealed class IdleShutdownService : ServiceBase
 {
     private const string PipeName = "IdleShutdown";
     private const int MachineStateShutdownGraceSeconds = 60;
+    private const int AgentSessionStateFreshSeconds = 30;
 
     private readonly object _sync = new();
     private readonly object _activitySync = new();
@@ -17,6 +18,8 @@ internal sealed class IdleShutdownService : ServiceBase
     private readonly Dictionary<int, DateTime?> _lockedSessionLastInput = new();
     private readonly Dictionary<int, DateTime> _lockedDiagnosticLoggedAt = new();
     private readonly Dictionary<int, int> _lockedPipeResetCount = new();
+    private readonly Dictionary<int, AgentSessionState> _agentSessionStates =
+        new();
     private readonly NoUserActivityTracker _noUserTracker = new();
     private readonly ConsoleInputMonitorLauncher _inputMonitor = new();
 
@@ -115,6 +118,12 @@ internal sealed class IdleShutdownService : ServiceBase
             {
                 case SessionChangeReason.SessionLock:
                 case SessionChangeReason.RemoteDisconnect:
+                    _agentSessionStates[changeDescription.SessionId] =
+                        new AgentSessionState(
+                            true,
+                            DateTime.UtcNow,
+                            null);
+
                     _lockedSince[changeDescription.SessionId] =
                         DateTime.UtcNow;
 
@@ -132,6 +141,12 @@ internal sealed class IdleShutdownService : ServiceBase
                 case SessionChangeReason.SessionUnlock:
                 case SessionChangeReason.SessionLogon:
                     cancelPendingShutdown = true;
+
+                    _agentSessionStates[changeDescription.SessionId] =
+                        new AgentSessionState(
+                            false,
+                            DateTime.UtcNow,
+                            DateTime.UtcNow);
 
                     _lockedSince.Remove(
                         changeDescription.SessionId);
@@ -155,6 +170,9 @@ internal sealed class IdleShutdownService : ServiceBase
                     break;
 
                 case SessionChangeReason.SessionLogoff:
+                    _agentSessionStates.Remove(
+                        changeDescription.SessionId);
+
                     _lockedSince.Remove(
                         changeDescription.SessionId);
 
@@ -176,6 +194,8 @@ internal sealed class IdleShutdownService : ServiceBase
 
         if (cancelPendingShutdown)
         {
+            MachineActivitySignal.Pulse();
+
             CancelPendingShutdown(
                 $"session {changeDescription.SessionId} " +
                 $"reported {changeDescription.Reason}");
@@ -218,7 +238,8 @@ internal sealed class IdleShutdownService : ServiceBase
                     "has resumed.");
             }
 
-            var machineState = SessionManager.GetMachineSessionState();
+            var machineState = IncludeFreshAgentSessions(
+                SessionManager.GetMachineSessionState());
 
             if (machineState.ConsoleSessionId.HasValue)
             {
@@ -262,18 +283,19 @@ internal sealed class IdleShutdownService : ServiceBase
         IReadOnlyList<SessionSnapshot> sessions)
     {
         int? sessionToShutdown = null;
+        var effectiveSessions = GetEffectiveSessionStates(sessions);
 
         if (!MachineSessionPolicy.CanApplyLockedTimeout(
-                sessions.Select(session => session.IsLocked)))
+                effectiveSessions.Select(session => session.IsLocked)))
         {
             ClearTrackedLockedSessionsIfNeeded(
-                sessions.Count == 0
+                effectiveSessions.Count == 0
                     ? "no logged-on session remains"
                     : "an unlocked logged-on session is active");
             return;
         }
 
-        var lockedSessions = sessions
+        var lockedSessions = effectiveSessions
             .Where(session => session.IsLocked)
             .ToDictionary(session => session.SessionId);
 
@@ -419,6 +441,81 @@ internal sealed class IdleShutdownService : ServiceBase
 
             Log.Write($"Lock timers cleared because {reason}.");
         }
+    }
+
+    private IReadOnlyList<SessionSnapshot> GetEffectiveSessionStates(
+        IReadOnlyList<SessionSnapshot> sessions)
+    {
+        var now = DateTime.UtcNow;
+        var currentSessionIds = sessions
+            .Select(session => session.SessionId)
+            .ToHashSet();
+
+        lock (_sync)
+        {
+            foreach (var staleSessionId in _agentSessionStates.Keys
+                         .Where(sessionId =>
+                             !currentSessionIds.Contains(sessionId))
+                         .ToArray())
+            {
+                _agentSessionStates.Remove(staleSessionId);
+            }
+
+            return sessions
+                .Select(session =>
+                {
+                    if (
+                        _agentSessionStates.TryGetValue(
+                            session.SessionId,
+                            out var reportedState) &&
+                        now - reportedState.ReportedAtUtc <=
+                        TimeSpan.FromSeconds(AgentSessionStateFreshSeconds))
+                    {
+                        return session with
+                        {
+                            IsLocked = reportedState.IsLocked
+                        };
+                    }
+
+                    return session;
+                })
+                .ToArray();
+        }
+    }
+
+    private MachineSessionState IncludeFreshAgentSessions(
+        MachineSessionState machineState)
+    {
+        var now = DateTime.UtcNow;
+        var sessions = machineState.LoggedOnSessions.ToList();
+        var knownSessionIds = sessions
+            .Select(session => session.SessionId)
+            .ToHashSet();
+
+        lock (_sync)
+        {
+            foreach (var pair in _agentSessionStates)
+            {
+                if (
+                    knownSessionIds.Contains(pair.Key) ||
+                    now - pair.Value.ReportedAtUtc >
+                    TimeSpan.FromSeconds(AgentSessionStateFreshSeconds))
+                {
+                    continue;
+                }
+
+                sessions.Add(
+                    new SessionSnapshot(
+                        pair.Key,
+                        pair.Value.IsLocked,
+                        pair.Value.LastInputUtc));
+            }
+        }
+
+        return machineState with
+        {
+            LoggedOnSessions = sessions
+        };
     }
 
     private void WriteLockedDiagnosticIfDue(
@@ -674,6 +771,14 @@ internal sealed class IdleShutdownService : ServiceBase
                         "interactive idle timeout",
                         config);
                 }
+                else if (TryHandleAgentSessionStateCommand(command))
+                {
+                    // Per-session state heartbeats are intentionally silent.
+                }
+                else if (TryHandleSessionInputCommand(command))
+                {
+                    // Interactive input is intentionally not logged per event.
+                }
                 else if (TryHandleLockedInputCommand(command))
                 {
                     // Input movement is intentionally not logged. It may be
@@ -753,8 +858,123 @@ internal sealed class IdleShutdownService : ServiceBase
             return false;
         }
 
-        HandleSessionInput(sessionId);
+        HandleSessionInput(sessionId, isLocked: true);
         return true;
+    }
+
+    private bool TryHandleSessionInputCommand(string? command)
+    {
+        const string prefix = "SESSION_INPUT:";
+
+        if (
+            command is null ||
+            !command.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(
+                command[prefix.Length..],
+                out var sessionId) ||
+            sessionId < 0)
+        {
+            return false;
+        }
+
+        HandleSessionInput(sessionId, isLocked: false);
+        return true;
+    }
+
+    private bool TryHandleAgentSessionStateCommand(string? command)
+    {
+        const string prefix = "SESSION_STATE:";
+
+        if (
+            command is null ||
+            !command.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parts = command[prefix.Length..].Split(':');
+
+        if (
+            parts.Length != 3 ||
+            !int.TryParse(parts[0], out var sessionId) ||
+            sessionId < 0 ||
+            !double.TryParse(
+                parts[2],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var idleSeconds) ||
+            idleSeconds < 0)
+        {
+            return false;
+        }
+
+        bool isLocked;
+
+        if (string.Equals(
+                parts[1],
+                "LOCKED",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            isLocked = true;
+        }
+        else if (string.Equals(
+                     parts[1],
+                     "UNLOCKED",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            isLocked = false;
+        }
+        else
+        {
+            return false;
+        }
+
+        HandleAgentSessionState(sessionId, isLocked, idleSeconds);
+        return true;
+    }
+
+    private void HandleAgentSessionState(
+        int sessionId,
+        bool isLocked,
+        double idleSeconds)
+    {
+        var now = DateTime.UtcNow;
+        var boundedIdleSeconds = Math.Min(
+            idleSeconds,
+            TimeSpan.FromDays(365).TotalSeconds);
+        var cancelLockedShutdown = false;
+
+        lock (_sync)
+        {
+            _agentSessionStates[sessionId] = new AgentSessionState(
+                isLocked,
+                now,
+                now - TimeSpan.FromSeconds(boundedIdleSeconds));
+
+            if (!isLocked)
+            {
+                _lockedSince.Remove(sessionId);
+                _lockedSessionLastInput.Remove(sessionId);
+                _lockedDiagnosticLoggedAt.Remove(sessionId);
+                _lockedPipeResetCount.Remove(sessionId);
+
+                cancelLockedShutdown =
+                    _pendingShutdown is
+                    {
+                        Kind: PendingShutdownKind.LockedSession
+                    };
+            }
+        }
+
+        if (cancelLockedShutdown)
+        {
+            CancelPendingShutdown(
+                $"agent in session {sessionId} reported an unlocked desktop");
+        }
     }
 
     private bool TryHandleMachineInputCommand(string? command)
@@ -774,16 +994,26 @@ internal sealed class IdleShutdownService : ServiceBase
             return false;
         }
 
-        HandleSessionInput(sessionId);
+        HandleSessionInput(sessionId, isLocked: null);
         return true;
     }
 
-    private void HandleSessionInput(int sessionId)
+    private void HandleSessionInput(int sessionId, bool? isLocked)
     {
         var cancelPending = false;
 
+        MachineActivitySignal.Pulse();
+
         lock (_sync)
         {
+            if (isLocked.HasValue)
+            {
+                _agentSessionStates[sessionId] = new AgentSessionState(
+                    isLocked.Value,
+                    DateTime.UtcNow,
+                    DateTime.UtcNow);
+            }
+
             if (_lockedSince.ContainsKey(sessionId))
             {
                 _lockedSince[sessionId] = DateTime.UtcNow;
@@ -1028,6 +1258,14 @@ internal sealed class IdleShutdownService : ServiceBase
         string reason,
         AppConfig config)
     {
+        if (HasActiveInteractiveSession(config))
+        {
+            Log.Write(
+                "Interactive shutdown request ignored because another " +
+                "unlocked user session is still active.");
+            return;
+        }
+
         if (config.DryRun)
         {
             if (ShouldDeferForSystemActivity(reason))
@@ -1071,6 +1309,21 @@ internal sealed class IdleShutdownService : ServiceBase
                     reason,
                     DateTime.UtcNow.AddMinutes(1));
             }
+        }
+    }
+
+    private bool HasActiveInteractiveSession(AppConfig config)
+    {
+        var now = DateTime.UtcNow;
+        var idleThreshold = TimeSpan.FromMinutes(config.IdleMinutes);
+
+        lock (_sync)
+        {
+            return InteractiveSessionPolicy.HasActiveSession(
+                _agentSessionStates.Values,
+                now,
+                TimeSpan.FromSeconds(AgentSessionStateFreshSeconds),
+                idleThreshold);
         }
     }
 

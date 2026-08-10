@@ -169,6 +169,36 @@ var tests = new (string Name, Action Run)[]
         Expect(
             false,
             MachineSessionPolicy.CanApplyLockedTimeout([true, false, true]));
+    }),
+
+    ("a fresh active unlocked session blocks an idle shutdown", () =>
+    {
+        var now = Utc(100);
+
+        Expect(
+            true,
+            InteractiveSessionPolicy.HasActiveSession(
+                [new AgentSessionState(false, Utc(99), Utc(90))],
+                now,
+                TimeSpan.FromSeconds(30),
+                TimeSpan.FromMinutes(1)));
+    }),
+
+    ("locked idle and stale sessions do not block shutdown", () =>
+    {
+        var now = Utc(100);
+
+        Expect(
+            false,
+            InteractiveSessionPolicy.HasActiveSession(
+                [
+                    new AgentSessionState(true, Utc(99), Utc(99)),
+                    new AgentSessionState(false, Utc(99), Utc(0)),
+                    new AgentSessionState(false, Utc(60), Utc(99))
+                ],
+                now,
+                TimeSpan.FromSeconds(30),
+                TimeSpan.FromMinutes(1)));
     })
 };
 

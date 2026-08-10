@@ -15,6 +15,8 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Defers every shutdown while Windows reports a system/display power request, Windows Update is actively installing or uninstalling, or an MSI transaction is running.
 - Keeps deferred requests pending and checks them again, while new physical input cancels the request.
 - Applies a locked-session timeout only when every logged-on session is locked or disconnected; an unlocked session always blocks machine shutdown.
+- Runs a separate agent in every local and Remote Desktop user session. Activity or the Continue button in any session cancels shutdown and closes warning dialogs in all sessions.
+- Rejects an expired warning from one idle session while another unlocked user session is still active.
 - Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
 - Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
 - Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.

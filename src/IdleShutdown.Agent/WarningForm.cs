@@ -11,6 +11,7 @@ internal sealed class WarningForm : Form
     private readonly System.Windows.Forms.Timer _timer;
     private readonly UiStrings _ui;
     private readonly UiPalette _palette;
+    private readonly long _machineActivityVersion;
 
     private readonly Label _countdownLabel;
     private readonly Label _statusLabel;
@@ -27,6 +28,7 @@ internal sealed class WarningForm : Form
         _idleAtStart = idleAtStart;
         _ui = LocalizedText.Current;
         _palette = UiTheme.Current;
+        _machineActivityVersion = MachineActivitySignal.ReadVersion();
 
         AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = Color.Magenta;
@@ -241,6 +243,17 @@ internal sealed class WarningForm : Form
         object? sender,
         EventArgs e)
     {
+        var currentMachineActivityVersion =
+            MachineActivitySignal.ReadVersion();
+
+        if (
+            currentMachineActivityVersion != 0 &&
+            currentMachineActivityVersion != _machineActivityVersion)
+        {
+            CancelShutdown();
+            return;
+        }
+
         var currentIdle = NativeMethods.GetIdleTime();
 
         if (

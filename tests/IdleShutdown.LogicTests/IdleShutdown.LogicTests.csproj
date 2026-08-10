@@ -19,5 +19,8 @@
     <Compile
       Include="..\..\src\IdleShutdown.Service\MachineSessionPolicy.cs"
       Link="MachineSessionPolicy.cs" />
+    <Compile
+      Include="..\..\src\IdleShutdown.Service\InteractiveSessionPolicy.cs"
+      Link="InteractiveSessionPolicy.cs" />
   </ItemGroup>
 </Project>

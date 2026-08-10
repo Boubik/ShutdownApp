@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
-    <PackageReleaseNotes>Version $(Version) adds production safeguards for Windows Update, MSI installations, Windows power requests and multi-session computers; replaces forced scheduled shutdown with an internal cancellable grace period and a non-forced final command; fails safely on invalid configuration; rotates logs; and prevents repeated DryRun warning dialogs until new input occurs.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) fixes local plus Remote Desktop multi-user operation: one agent now runs in every session, activity is synchronized machine-wide, warning dialogs close across sessions, active users block idle shutdown requests, and fresh agent state prevents unlocked RDP sessions from being mistaken for locked sessions.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>
