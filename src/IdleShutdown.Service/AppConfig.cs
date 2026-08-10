@@ -4,13 +4,26 @@ namespace IdleShutdown.ServiceApp;
 
 internal sealed class AppConfig
 {
-    public int IdleMinutes { get; set; } = 60;
+    private static readonly string[] RequiredProperties =
+    [
+        nameof(IdleMinutes),
+        nameof(WarningSeconds),
+        nameof(LockedMinutes),
+        nameof(NoUserMinutes),
+        nameof(CheckIntervalSeconds),
+        nameof(PauseWhenFullscreen),
+        nameof(DryRun)
+    ];
+
+    public int IdleMinutes { get; set; } = 90;
     public int WarningSeconds { get; set; } = 300;
-    public int LockedMinutes { get; set; } = 60;
-    public int NoUserMinutes { get; set; } = 60;
+    public int LockedMinutes { get; set; } = 90;
+    public int NoUserMinutes { get; set; } = 90;
     public int CheckIntervalSeconds { get; set; } = 5;
     public bool PauseWhenFullscreen { get; set; } = true;
     public bool DryRun { get; set; } = false;
+    public bool IsValid { get; private set; } = true;
+    public string? LoadError { get; private set; }
 
 
     public static string BaseDirectory =>
@@ -32,10 +45,33 @@ internal sealed class AppConfig
         {
             if (!File.Exists(ConfigPath))
             {
-                return new AppConfig();
+                return Invalid("config.json does not exist");
             }
 
             var json = File.ReadAllText(ConfigPath);
+            using var document = JsonDocument.Parse(json);
+
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return Invalid("config.json must contain a JSON object");
+            }
+
+            var presentProperties = document.RootElement
+                .EnumerateObject()
+                .Select(property => property.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var missingProperties = RequiredProperties
+                .Where(property => !presentProperties.Contains(property))
+                .ToArray();
+
+            if (missingProperties.Length > 0)
+            {
+                return Invalid(
+                    $"config.json is missing: " +
+                    string.Join(", ", missingProperties));
+            }
+
             var config = JsonSerializer.Deserialize<AppConfig>(
                 json,
                 new JsonSerializerOptions
@@ -45,25 +81,33 @@ internal sealed class AppConfig
 
             if (config is null)
             {
-                return new AppConfig();
+                return Invalid("config.json could not be deserialized");
             }
 
-            config.IdleMinutes = Math.Max(1, config.IdleMinutes);
-            config.WarningSeconds = Math.Max(1, config.WarningSeconds);
-            config.LockedMinutes = Math.Max(1, config.LockedMinutes);
-            config.NoUserMinutes = Math.Max(1, config.NoUserMinutes);
-            config.CheckIntervalSeconds =
-                Math.Max(1, config.CheckIntervalSeconds);
+            if (
+                config.IdleMinutes < 1 ||
+                config.WarningSeconds < 1 ||
+                config.LockedMinutes < 1 ||
+                config.NoUserMinutes < 1 ||
+                config.CheckIntervalSeconds < 1)
+            {
+                return Invalid(
+                    "all timeout and interval values must be at least 1");
+            }
 
             return config;
         }
         catch (Exception ex)
         {
-            Log.Write(
-                $"Configuration load failed: " +
+            return Invalid(
                 $"{ex.GetType().Name}: {ex.Message}");
-
-            return new AppConfig();
         }
     }
+
+    private static AppConfig Invalid(string error) =>
+        new()
+        {
+            IsValid = false,
+            LoadError = error
+        };
 }

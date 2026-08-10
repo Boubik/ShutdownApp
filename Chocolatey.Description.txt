@@ -11,6 +11,10 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Performs a final no-user state and console-input check immediately before shutdown.
 - Runs a hidden input monitor in the physical console session, covering sign-in screens where Windows WTS does not expose LastInputTime.
 - Uses a cancellable 60-second final grace period for locked/no-user shutdowns; physical input, sign-in or unlock cancels it.
+- Uses a non-forced final Windows shutdown request so applications with unsaved work can still block shutdown instead of being terminated automatically.
+- Defers every shutdown while Windows reports a system/display power request, Windows Update is actively installing or uninstalling, or an MSI transaction is running.
+- Keeps deferred requests pending and checks them again, while new physical input cancels the request.
+- Applies a locked-session timeout only when every logged-on session is locked or disconnected; an unlocked session always blocks machine shutdown.
 - Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
 - Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
 - Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.
@@ -18,7 +22,10 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Automatically follows the Windows light or dark application theme whenever the warning is displayed.
 - Shows the running application version unobtrusively in the warning dialog for easier fleet diagnostics.
 - Supports safe testing with `DryRun: true`; shutdown decisions are logged without powering off the computer.
-- Writes important state changes to a shared English-only log without logging every periodic check.
+- Disables all shutdown actions if the configuration is missing, incomplete or invalid and resumes automatically after it is repaired.
+- Writes only important state changes to a shared English-only production log; detailed diagnostics are enabled only in DryRun.
+- Rotates the log at 2 MB and retains two archives, limiting total log storage to approximately 6 MB.
+- Prevents repeated expired DryRun warning dialogs until new physical input is detected.
 - Preserves the existing configuration during Chocolatey upgrades unless `/ResetConfig` is supplied.
 - Includes the remote-friendly `idle-shutdown-test` health-check command.
 

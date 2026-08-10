@@ -4,13 +4,25 @@ namespace IdleShutdown.AgentApp;
 
 internal sealed class AppConfig
 {
-    public int IdleMinutes { get; set; } = 60;
+    private static readonly string[] RequiredProperties =
+    [
+        nameof(IdleMinutes),
+        nameof(WarningSeconds),
+        nameof(LockedMinutes),
+        nameof(NoUserMinutes),
+        nameof(CheckIntervalSeconds),
+        nameof(PauseWhenFullscreen),
+        nameof(DryRun)
+    ];
+
+    public int IdleMinutes { get; set; } = 90;
     public int WarningSeconds { get; set; } = 300;
-    public int LockedMinutes { get; set; } = 60;
-    public int NoUserMinutes { get; set; } = 60;
+    public int LockedMinutes { get; set; } = 90;
+    public int NoUserMinutes { get; set; } = 90;
     public int CheckIntervalSeconds { get; set; } = 5;
     public bool PauseWhenFullscreen { get; set; } = true;
     public bool DryRun { get; set; } = false;
+    public bool IsValid { get; private set; } = true;
 
     public static string BaseDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
@@ -24,7 +36,7 @@ internal sealed class AppConfig
         {
             if (!File.Exists(ConfigPath))
             {
-                return new AppConfig();
+                return Invalid();
             }
 
             var options = new JsonSerializerOptions
@@ -32,23 +44,51 @@ internal sealed class AppConfig
                 PropertyNameCaseInsensitive = true
             };
 
-            var config = JsonSerializer.Deserialize<AppConfig>(
-                File.ReadAllText(ConfigPath),
-                options) ?? new AppConfig();
+            var json = File.ReadAllText(ConfigPath);
+            using var document = JsonDocument.Parse(json);
 
-            config.IdleMinutes = Math.Max(1, config.IdleMinutes);
-            config.WarningSeconds = Math.Max(1, config.WarningSeconds);
-            config.LockedMinutes = Math.Max(1, config.LockedMinutes);
-            config.NoUserMinutes = Math.Max(1, config.NoUserMinutes);
-            config.CheckIntervalSeconds = Math.Max(
-                1,
-                config.CheckIntervalSeconds);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return Invalid();
+            }
+
+            var presentProperties = document.RootElement
+                .EnumerateObject()
+                .Select(property => property.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (RequiredProperties.Any(
+                    property => !presentProperties.Contains(property)))
+            {
+                return Invalid();
+            }
+
+            var config = JsonSerializer.Deserialize<AppConfig>(
+                json,
+                options);
+
+            if (
+                config is null ||
+                config.IdleMinutes < 1 ||
+                config.WarningSeconds < 1 ||
+                config.LockedMinutes < 1 ||
+                config.NoUserMinutes < 1 ||
+                config.CheckIntervalSeconds < 1)
+            {
+                return Invalid();
+            }
 
             return config;
         }
         catch
         {
-            return new AppConfig();
+            return Invalid();
         }
     }
+
+    private static AppConfig Invalid() =>
+        new()
+        {
+            IsValid = false
+        };
 }

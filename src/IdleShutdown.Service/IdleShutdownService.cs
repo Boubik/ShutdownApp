@@ -12,6 +12,7 @@ internal sealed class IdleShutdownService : ServiceBase
     private const int MachineStateShutdownGraceSeconds = 60;
 
     private readonly object _sync = new();
+    private readonly object _activitySync = new();
     private readonly Dictionary<int, DateTime> _lockedSince = new();
     private readonly Dictionary<int, DateTime?> _lockedSessionLastInput = new();
     private readonly Dictionary<int, DateTime> _lockedDiagnosticLoggedAt = new();
@@ -25,7 +26,14 @@ internal sealed class IdleShutdownService : ServiceBase
     private DateTime? _noUserDiagnosticLoggedAt;
     private int _noUserHelperResetCount;
     private PendingShutdown? _pendingShutdown;
+    private DateTime? _systemBusyRecheckUtc;
+    private DateTime? _systemActivityProbeErrorLoggedUtc;
+    private string? _lastSystemBusyReason;
+    private DateTime? _lastSystemBusyLoggedUtc;
+    private DateTime? _configurationErrorLoggedUtc;
+    private bool _configurationWasInvalid;
     private bool _systemShutdownInProgress;
+    private bool _shutdownCommandIssued;
     private int _machineStateCheckRunning;
 
     public IdleShutdownService()
@@ -46,7 +54,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
         var config = AppConfig.Load();
         var checkInterval = TimeSpan.FromSeconds(
-            config.CheckIntervalSeconds);
+            config.IsValid ? config.CheckIntervalSeconds : 5);
 
         _timer = new System.Threading.Timer(
             CheckMachineState,
@@ -56,7 +64,12 @@ internal sealed class IdleShutdownService : ServiceBase
 
         Log.Write(
             $"Service started; state check interval is " +
-            $"{config.CheckIntervalSeconds} second(s).");
+            $"{checkInterval.TotalSeconds:F0} second(s).");
+
+        if (!config.IsValid)
+        {
+            WriteConfigurationErrorIfDue(config);
+        }
     }
 
     protected override void OnStop()
@@ -178,7 +191,33 @@ internal sealed class IdleShutdownService : ServiceBase
 
         try
         {
+            Log.Maintain();
+
             var config = AppConfig.Load();
+
+            if (!config.IsValid)
+            {
+                CancelPendingShutdown("configuration is invalid");
+                WriteConfigurationErrorIfDue(config);
+                return;
+            }
+
+            var configurationRecovered = false;
+
+            lock (_sync)
+            {
+                configurationRecovered = _configurationWasInvalid;
+                _configurationWasInvalid = false;
+                _configurationErrorLoggedUtc = null;
+            }
+
+            if (configurationRecovered)
+            {
+                Log.Write(
+                    "Configuration is valid again; shutdown monitoring " +
+                    "has resumed.");
+            }
+
             var machineState = SessionManager.GetMachineSessionState();
 
             if (machineState.ConsoleSessionId.HasValue)
@@ -192,6 +231,11 @@ internal sealed class IdleShutdownService : ServiceBase
             }
 
             CancelPendingShutdownIfUserBecameActive(machineState);
+
+            if (ProcessPendingShutdown(config, machineState))
+            {
+                return;
+            }
 
             CheckLockedSessions(
                 config,
@@ -218,6 +262,17 @@ internal sealed class IdleShutdownService : ServiceBase
         IReadOnlyList<SessionSnapshot> sessions)
     {
         int? sessionToShutdown = null;
+
+        if (!MachineSessionPolicy.CanApplyLockedTimeout(
+                sessions.Select(session => session.IsLocked)))
+        {
+            ClearTrackedLockedSessionsIfNeeded(
+                sessions.Count == 0
+                    ? "no logged-on session remains"
+                    : "an unlocked logged-on session is active");
+            return;
+        }
+
         var lockedSessions = sessions
             .Where(session => session.IsLocked)
             .ToDictionary(session => session.SessionId);
@@ -345,6 +400,24 @@ internal sealed class IdleShutdownService : ServiceBase
 
             _lockedPipeResetCount.Remove(
                 sessionToShutdown.Value);
+        }
+    }
+
+    private void ClearTrackedLockedSessionsIfNeeded(string reason)
+    {
+        lock (_sync)
+        {
+            if (_lockedSince.Count == 0)
+            {
+                return;
+            }
+
+            _lockedSince.Clear();
+            _lockedSessionLastInput.Clear();
+            _lockedDiagnosticLoggedAt.Clear();
+            _lockedPipeResetCount.Clear();
+
+            Log.Write($"Lock timers cleared because {reason}.");
         }
     }
 
@@ -584,6 +657,15 @@ internal sealed class IdleShutdownService : ServiceBase
                 {
                     var config = AppConfig.Load();
 
+                    if (!config.IsValid)
+                    {
+                        WriteConfigurationErrorIfDue(config);
+                        Log.Write(
+                            "Shutdown request from interactive agent " +
+                            "ignored because configuration is invalid.");
+                        continue;
+                    }
+
                     Log.Write(
                         "Shutdown requested by interactive agent " +
                         "after idle warning.");
@@ -628,6 +710,29 @@ internal sealed class IdleShutdownService : ServiceBase
                     // Service is stopping.
                 }
             }
+        }
+    }
+
+    private void WriteConfigurationErrorIfDue(AppConfig config)
+    {
+        var now = DateTime.UtcNow;
+
+        lock (_sync)
+        {
+            _configurationWasInvalid = true;
+
+            if (
+                _configurationErrorLoggedUtc.HasValue &&
+                now - _configurationErrorLoggedUtc.Value <
+                TimeSpan.FromHours(1))
+            {
+                return;
+            }
+
+            Log.Write(
+                "Configuration is invalid; all shutdown actions are " +
+                $"disabled: {config.LoadError ?? "unknown error"}.");
+            _configurationErrorLoggedUtc = now;
         }
     }
 
@@ -700,6 +805,10 @@ internal sealed class IdleShutdownService : ServiceBase
             cancelPending =
                 _pendingShutdown is
                 {
+                    Kind: PendingShutdownKind.Interactive
+                } ||
+                _pendingShutdown is
+                {
                     Kind: PendingShutdownKind.NoUser
                 } ||
                 _pendingShutdown is
@@ -725,6 +834,11 @@ internal sealed class IdleShutdownService : ServiceBase
     {
         if (config.DryRun)
         {
+            if (ShouldDeferForSystemActivity(reason))
+            {
+                return;
+            }
+
             Log.Write(
                 $"DRY RUN: {MachineStateShutdownGraceSeconds}-second " +
                 $"shutdown grace period skipped ({reason}).");
@@ -739,48 +853,23 @@ internal sealed class IdleShutdownService : ServiceBase
                 return;
             }
 
-            try
-            {
-                Process.Start(
-                    new ProcessStartInfo
-                    {
-                        FileName = Path.Combine(
-                            Environment.SystemDirectory,
-                            "shutdown.exe"),
+            _pendingShutdown = new PendingShutdown(
+                kind,
+                sessionId,
+                reason,
+                DateTime.UtcNow.AddSeconds(
+                    MachineStateShutdownGraceSeconds));
 
-                        Arguments =
-                            $"/s /t {MachineStateShutdownGraceSeconds} " +
-                            $"/d p:0:0 " +
-                            $"/c \"Automatic shutdown: {reason}. " +
-                            $"Sign in or unlock this computer to cancel.\"",
-
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    });
-
-                _pendingShutdown = new PendingShutdown(
-                    kind,
-                    sessionId,
-                    reason);
-
-                Log.Write(
-                    $"Shutdown scheduled in " +
-                    $"{MachineStateShutdownGraceSeconds} second(s) " +
-                    $"({reason}); sign-in or unlock will cancel it.");
-            }
-            catch (Exception ex)
-            {
-                Log.Write(
-                    $"Shutdown scheduling failed: " +
-                    $"{ex.GetType().Name}: {ex.Message}");
-
-                return;
-            }
+            Log.Write(
+                $"Shutdown grace period started for " +
+                $"{MachineStateShutdownGraceSeconds} second(s) " +
+                $"({reason}); physical input, sign-in or unlock " +
+                $"will cancel it.");
         }
 
         // Close the small race between the final pre-shutdown state read and
-        // scheduling the grace period. Later changes are covered by session
-        // notifications and the periodic state check.
+        // starting the internal grace period. Later changes are covered by
+        // session notifications, the console helper and periodic checks.
         try
         {
             CancelPendingShutdownIfUserBecameActive(
@@ -815,10 +904,12 @@ internal sealed class IdleShutdownService : ServiceBase
                 machineState.LoggedOnSessions.Count > 0,
 
             PendingShutdownKind.LockedSession =>
-                machineState.LoggedOnSessions.Any(
+                !machineState.LoggedOnSessions.Any(
                     session =>
                         session.SessionId == pending.SessionId &&
-                        !session.IsLocked),
+                        session.IsLocked) ||
+                machineState.LoggedOnSessions.Any(
+                    session => !session.IsLocked),
 
             _ => false
         };
@@ -839,65 +930,213 @@ internal sealed class IdleShutdownService : ServiceBase
                 return;
             }
 
-            try
-            {
-                using var process = Process.Start(
-                    new ProcessStartInfo
-                    {
-                        FileName = Path.Combine(
-                            Environment.SystemDirectory,
-                            "shutdown.exe"),
+            Log.Write(
+                $"Pending shutdown cancelled because " +
+                $"{cancellationReason} ({_pendingShutdown.Reason}).");
 
-                        Arguments = "/a",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    });
-
-                if (process is null)
-                {
-                    throw new InvalidOperationException(
-                        "shutdown.exe did not start.");
-                }
-
-                if (!process.WaitForExit(5000))
-                {
-                    throw new System.TimeoutException(
-                        "shutdown.exe /a did not exit within 5 seconds.");
-                }
-
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        $"shutdown.exe /a exited with code " +
-                        $"{process.ExitCode}.");
-                }
-
-                Log.Write(
-                    $"Pending shutdown cancelled because " +
-                    $"{cancellationReason} ({_pendingShutdown.Reason}).");
-
-                _pendingShutdown = null;
-            }
-            catch (Exception ex)
-            {
-                Log.Write(
-                    $"Pending shutdown cancellation failed: " +
-                    $"{ex.GetType().Name}: {ex.Message}");
-            }
+            _pendingShutdown = null;
         }
     }
 
-    private static void RequestImmediateShutdown(
+    private bool ProcessPendingShutdown(
+        AppConfig config,
+        MachineSessionState machineState)
+    {
+        PendingShutdown? pending;
+
+        lock (_sync)
+        {
+            pending = _pendingShutdown;
+        }
+
+        if (pending is null)
+        {
+            return _shutdownCommandIssued;
+        }
+
+        if (config.DryRun)
+        {
+            CancelPendingShutdown("DryRun was enabled");
+            return false;
+        }
+
+        CancelPendingShutdownIfUserBecameActive(machineState);
+
+        lock (_sync)
+        {
+            pending = _pendingShutdown;
+        }
+
+        if (pending is null)
+        {
+            return false;
+        }
+
+        if (DateTime.UtcNow < pending.ExecuteAtUtc)
+        {
+            return true;
+        }
+
+        if (ShouldDeferForSystemActivity(pending.Reason))
+        {
+            lock (_sync)
+            {
+                if (_pendingShutdown == pending)
+                {
+                    _pendingShutdown = pending with
+                    {
+                        ExecuteAtUtc = DateTime.UtcNow.AddMinutes(1)
+                    };
+                }
+            }
+
+            return true;
+        }
+
+        lock (_sync)
+        {
+            if (_pendingShutdown != pending)
+            {
+                return true;
+            }
+
+            _pendingShutdown = null;
+        }
+
+        if (ExecuteShutdown(pending.Reason))
+        {
+            lock (_sync)
+            {
+                _shutdownCommandIssued = true;
+            }
+        }
+        else
+        {
+            lock (_sync)
+            {
+                _pendingShutdown ??= pending with
+                {
+                    ExecuteAtUtc = DateTime.UtcNow.AddMinutes(1)
+                };
+            }
+        }
+
+        return true;
+    }
+
+    private void RequestImmediateShutdown(
         string reason,
         AppConfig config)
     {
         if (config.DryRun)
         {
+            if (ShouldDeferForSystemActivity(reason))
+            {
+                return;
+            }
+
             Log.Write(
                 $"DRY RUN: shutdown skipped ({reason}).");
             return;
         }
 
+        if (ShouldDeferForSystemActivity(reason))
+        {
+            lock (_sync)
+            {
+                _pendingShutdown ??= new PendingShutdown(
+                    PendingShutdownKind.Interactive,
+                    null,
+                    reason,
+                    DateTime.UtcNow.AddMinutes(1));
+            }
+
+            return;
+        }
+
+        if (ExecuteShutdown(reason))
+        {
+            lock (_sync)
+            {
+                _shutdownCommandIssued = true;
+            }
+        }
+        else
+        {
+            lock (_sync)
+            {
+                _pendingShutdown ??= new PendingShutdown(
+                    PendingShutdownKind.Interactive,
+                    null,
+                    reason,
+                    DateTime.UtcNow.AddMinutes(1));
+            }
+        }
+    }
+
+    private bool ShouldDeferForSystemActivity(string shutdownReason)
+    {
+        var now = DateTime.UtcNow;
+
+        lock (_activitySync)
+        {
+            if (
+                _systemBusyRecheckUtc.HasValue &&
+                now < _systemBusyRecheckUtc.Value)
+            {
+                return true;
+            }
+        }
+
+        var status = SystemActivityGuard.GetStatus();
+
+        lock (_activitySync)
+        {
+            if (
+                !string.IsNullOrWhiteSpace(status.ProbeError) &&
+                (
+                    !_systemActivityProbeErrorLoggedUtc.HasValue ||
+                    now - _systemActivityProbeErrorLoggedUtc.Value >=
+                    TimeSpan.FromHours(1)
+                ))
+            {
+                Log.Write(
+                    $"System-activity probe warning: {status.ProbeError}.");
+                _systemActivityProbeErrorLoggedUtc = now;
+            }
+
+            if (!status.ShouldDefer)
+            {
+                _systemBusyRecheckUtc = null;
+                _lastSystemBusyReason = null;
+                _lastSystemBusyLoggedUtc = null;
+                return false;
+            }
+
+            _systemBusyRecheckUtc = now.AddMinutes(1);
+
+            if (
+                !string.Equals(
+                    _lastSystemBusyReason,
+                    status.Reason,
+                    StringComparison.Ordinal) ||
+                !_lastSystemBusyLoggedUtc.HasValue ||
+                now - _lastSystemBusyLoggedUtc.Value >= TimeSpan.FromHours(1))
+            {
+                Log.Write(
+                    $"Shutdown deferred ({shutdownReason}) because of " +
+                    $"{status.Reason}; the state will be checked again.");
+
+                _lastSystemBusyReason = status.Reason;
+                _lastSystemBusyLoggedUtc = now;
+            }
+
+            return true;
+        }
+    }
+
+    private static bool ExecuteShutdown(string reason)
+    {
         try
         {
             Process.Start(
@@ -917,22 +1156,26 @@ internal sealed class IdleShutdownService : ServiceBase
 
             Log.Write(
                 $"Shutdown command executed ({reason}).");
+            return true;
         }
         catch (Exception ex)
         {
             Log.Write(
                 $"Shutdown failed: " +
                 $"{ex.GetType().Name}: {ex.Message}");
+            return false;
         }
     }
 
     private sealed record PendingShutdown(
         PendingShutdownKind Kind,
         int? SessionId,
-        string Reason);
+        string Reason,
+        DateTime ExecuteAtUtc);
 
     private enum PendingShutdownKind
     {
+        Interactive,
         LockedSession,
         NoUser
     }

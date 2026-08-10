@@ -10,9 +10,12 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 - Odemčená relace: po `IdleMinutes` nečinnosti se zobrazí odpočet `WarningSeconds`. Libovolný nový vstup nebo tlačítko v dialogu vypnutí zruší.
 - Zamčená relace: služba vypne počítač po `LockedMinutes` bez popupu. Vstup na zamykací obrazovce timer resetuje a těsně před vypnutím se kontroluje ještě jednou.
 - Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce spustí celý timeout znovu.
-- Vypnutí ze zamčeného nebo nepřihlášeného stavu má navíc 60sekundovou systémovou ochrannou lhůtu. Nový vstup, přihlášení nebo odemknutí během ní naplánované vypnutí zruší.
+- Vypnutí ze zamčeného nebo nepřihlášeného stavu má navíc interní 60sekundovou ochrannou lhůtu. Nový vstup, přihlášení nebo odemknutí během ní vypnutí zruší. Teprve potom služba odešle nevnucené (`/t 0`, bez `/f`) vypnutí, takže Windows může upozornit na aplikaci s neuloženými daty.
+- Pokud je přihlášeno více uživatelů, zamčený timeout se použije pouze tehdy, když jsou zamčené nebo odpojené všechny jejich relace. Jedna aktivní odemčená relace vypnutí zablokuje.
 - `PauseWhenFullscreen`: před varováním se kontrolují systémové power/execution requests a poté skutečný fullscreen foreground okna.
+- Bezprostředně před každým vypnutím služba kontroluje systémové power requests, aktivní instalaci Windows Update a aktivní MSI transakci. Dokud aktivita trvá, požadavek odloží a kontrolu opakuje; nový fyzický vstup mezitím požadavek zruší. Samotný stav „čeká se na restart“ vypnutí neblokuje, aby Windows mohl aktualizaci dokončit.
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
+- Chybějící, neúplný nebo neplatný `config.json` vypínání bezpečně zastaví. Služba zapíše nejvýše jednu chybu za hodinu a pokračuje automaticky po opravě konfigurace.
 - Popup automaticky používá jazyk Windows (`cs`, `en`, `de`, `es`; ostatní jazyky použijí angličtinu).
 - Popup automaticky používá světlý nebo tmavý režim podle nastavení aplikací ve Windows.
 - Popup zobrazuje nenápadné číslo právě běžící verze v pravém dolním rohu.
@@ -43,6 +46,11 @@ Konfigurace a společný log jsou v:
 C:\ProgramData\IdleShutdown\config.json
 C:\ProgramData\IdleShutdown\IdleShutdown.log
 ```
+
+V produkčním režimu se zapisují jen důležité změny stavu, odklady, chyby a
+provedené vypnutí. Podrobné desetisekundové diagnostiky jsou zapnuté pouze při
+`DryRun: true`. Log se po dosažení 2 MB rotuje na `IdleShutdown.log.1` a
+`IdleShutdown.log.2`; celková maximální velikost je přibližně 6 MB.
 
 ## Sestavení
 
@@ -146,6 +154,10 @@ odhlášení, kde WTS na některých Windows neposkytuje `LastInputTime`. Před
 vypnutím se znovu ověří vstup i přihlášení uživatele a následuje zrušitelná
 60sekundová ochranná lhůta. Jednotlivé pohyby a stisky se do logu nezapisují;
 v režimu `DryRun` je v diagnostice pouze souhrnný čítač `helperResets`.
+
+Po vypršení popupu se při `DryRun` další popup neukáže, dokud aplikace
+nezaznamená nový fyzický vstup. Tím se při krátkých testovacích intervalech
+neopakují varování každých několik desítek sekund.
 
 ## Odinstalace
 

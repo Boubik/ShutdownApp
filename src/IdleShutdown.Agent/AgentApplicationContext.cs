@@ -10,6 +10,8 @@ internal sealed class AgentApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _timer;
 
     private bool _warningVisible;
+    private bool _waitingForInputAfterExpiredWarning;
+    private uint? _inputTickAtExpiredWarning;
     private bool _presentationDeferralLogged;
     private bool _wasWorkstationLocked;
     private uint? _lastObservedInputTick;
@@ -57,6 +59,12 @@ internal sealed class AgentApplicationContext : ApplicationContext
         var config =
             AppConfig.Load();
 
+        if (!config.IsValid)
+        {
+            _timer.Interval = 5000;
+            return;
+        }
+
         if (NativeMethods.IsWorkstationLocked())
         {
             MonitorLockedSessionInput(config.DryRun);
@@ -83,6 +91,23 @@ internal sealed class AgentApplicationContext : ApplicationContext
         if (NativeMethods.TryGetLastInputTick(out var observedInputTick))
         {
             _lastObservedInputTick = observedInputTick;
+
+            if (_waitingForInputAfterExpiredWarning)
+            {
+                if (
+                    _inputTickAtExpiredWarning.HasValue &&
+                    observedInputTick == _inputTickAtExpiredWarning.Value)
+                {
+                    return;
+                }
+
+                _waitingForInputAfterExpiredWarning = false;
+                _inputTickAtExpiredWarning = null;
+            }
+        }
+        else if (_waitingForInputAfterExpiredWarning)
+        {
+            return;
         }
 
         var idle =
@@ -136,11 +161,21 @@ internal sealed class AgentApplicationContext : ApplicationContext
 
             if (result == DialogResult.OK)
             {
+                if (NativeMethods.TryGetLastInputTick(out var inputTick))
+                {
+                    _waitingForInputAfterExpiredWarning = true;
+                    _inputTickAtExpiredWarning = inputTick;
+                }
+
                 Log.Write(
                     "Warning expired without user activity; " +
                     "requesting shutdown.");
 
-                SendShutdownRequest();
+                if (!SendShutdownRequest())
+                {
+                    _waitingForInputAfterExpiredWarning = false;
+                    _inputTickAtExpiredWarning = null;
+                }
             }
             else
             {
@@ -252,7 +287,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
         }
     }
 
-    private static void SendShutdownRequest()
+    private static bool SendShutdownRequest()
     {
         Exception? lastException = null;
 
@@ -288,7 +323,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
                     "Shutdown request was successfully sent " +
                     "to the Windows service.");
 
-                return;
+                return true;
             }
             catch (Exception ex)
             {
@@ -326,5 +361,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
             ui.WindowTitle,
             MessageBoxButtons.OK,
             MessageBoxIcon.Error);
+
+        return false;
     }
 }

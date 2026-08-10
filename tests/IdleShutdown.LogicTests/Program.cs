@@ -148,6 +148,27 @@ var tests = new (string Name, Action Run)[]
         Expect(true, SessionInputActivity.HasChanged(null, input));
         Expect(true, SessionInputActivity.HasChanged(input, Utc(11)));
         Expect(true, SessionInputActivity.HasChanged(input, Utc(9)));
+    }),
+
+    ("locked timeout requires at least one logged-on session", () =>
+    {
+        Expect(
+            false,
+            MachineSessionPolicy.CanApplyLockedTimeout([]));
+    }),
+
+    ("locked timeout is allowed when every session is locked", () =>
+    {
+        Expect(
+            true,
+            MachineSessionPolicy.CanApplyLockedTimeout([true, true]));
+    }),
+
+    ("an unlocked session blocks every locked-session timeout", () =>
+    {
+        Expect(
+            false,
+            MachineSessionPolicy.CanApplyLockedTimeout([true, false, true]));
     })
 };
 
