@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
-    <PackageReleaseNotes>Version $(Version) adds a visible version label to the warning dialog, removes unsupported Chocolatey nuspec metadata, and resets the no-user timer when input is detected on the Windows sign-in screen.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) adds a hidden console-session input monitor so mouse and keyboard activity resets locked and no-user timers even when Windows WTS LastInputTime is unavailable. Locked/no-user shutdowns also use a cancellable 60-second final grace period.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>

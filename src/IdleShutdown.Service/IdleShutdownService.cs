@@ -9,6 +9,7 @@ namespace IdleShutdown.ServiceApp;
 internal sealed class IdleShutdownService : ServiceBase
 {
     private const string PipeName = "IdleShutdown";
+    private const int MachineStateShutdownGraceSeconds = 60;
 
     private readonly object _sync = new();
     private readonly Dictionary<int, DateTime> _lockedSince = new();
@@ -16,17 +17,22 @@ internal sealed class IdleShutdownService : ServiceBase
     private readonly Dictionary<int, DateTime> _lockedDiagnosticLoggedAt = new();
     private readonly Dictionary<int, int> _lockedPipeResetCount = new();
     private readonly NoUserActivityTracker _noUserTracker = new();
+    private readonly ConsoleInputMonitorLauncher _inputMonitor = new();
 
     private CancellationTokenSource? _cts;
     private Task? _pipeTask;
     private System.Threading.Timer? _timer;
     private DateTime? _noUserDiagnosticLoggedAt;
+    private int _noUserHelperResetCount;
+    private PendingShutdown? _pendingShutdown;
+    private bool _systemShutdownInProgress;
     private int _machineStateCheckRunning;
 
     public IdleShutdownService()
     {
         ServiceName = "IdleShutdown";
         CanHandleSessionChangeEvent = true;
+        CanShutdown = true;
         CanStop = true;
         AutoLog = false;
     }
@@ -55,6 +61,13 @@ internal sealed class IdleShutdownService : ServiceBase
 
     protected override void OnStop()
     {
+        if (!_systemShutdownInProgress)
+        {
+            CancelPendingShutdown("service is stopping");
+        }
+
+        _inputMonitor.Stop();
+
         _cts?.Cancel();
         _timer?.Dispose();
 
@@ -70,10 +83,18 @@ internal sealed class IdleShutdownService : ServiceBase
         Log.Write("Service stopped.");
     }
 
+    protected override void OnShutdown()
+    {
+        _systemShutdownInProgress = true;
+        Log.Write("System shutdown notification received.");
+        base.OnShutdown();
+    }
+
     protected override void OnSessionChange(
         SessionChangeDescription changeDescription)
     {
         base.OnSessionChange(changeDescription);
+        var cancelPendingShutdown = false;
 
         lock (_sync)
         {
@@ -97,6 +118,8 @@ internal sealed class IdleShutdownService : ServiceBase
 
                 case SessionChangeReason.SessionUnlock:
                 case SessionChangeReason.SessionLogon:
+                    cancelPendingShutdown = true;
+
                     _lockedSince.Remove(
                         changeDescription.SessionId);
 
@@ -111,6 +134,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
                     _noUserTracker.ObserveLoggedOnUser();
                     _noUserDiagnosticLoggedAt = null;
+                    _noUserHelperResetCount = 0;
 
                     Log.Write(
                         $"Session {changeDescription.SessionId}: " +
@@ -136,6 +160,13 @@ internal sealed class IdleShutdownService : ServiceBase
                     break;
             }
         }
+
+        if (cancelPendingShutdown)
+        {
+            CancelPendingShutdown(
+                $"session {changeDescription.SessionId} " +
+                $"reported {changeDescription.Reason}");
+        }
     }
 
     private void CheckMachineState(object? state)
@@ -149,6 +180,18 @@ internal sealed class IdleShutdownService : ServiceBase
         {
             var config = AppConfig.Load();
             var machineState = SessionManager.GetMachineSessionState();
+
+            if (machineState.ConsoleSessionId.HasValue)
+            {
+                _inputMonitor.EnsureRunning(
+                    machineState.ConsoleSessionId.Value);
+            }
+            else
+            {
+                _inputMonitor.Stop();
+            }
+
+            CancelPendingShutdownIfUserBecameActive(machineState);
 
             CheckLockedSessions(
                 config,
@@ -283,9 +326,11 @@ internal sealed class IdleShutdownService : ServiceBase
             $"Locked timeout reached for session " +
             $"{sessionToShutdown.Value}.");
 
-        RequestShutdown(
+        ScheduleMachineStateShutdown(
             "locked-session timeout",
-            config);
+            config,
+            PendingShutdownKind.LockedSession,
+            sessionToShutdown.Value);
 
         lock (_sync)
         {
@@ -364,6 +409,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
                 _noUserTracker.ObserveLoggedOnUser();
                 _noUserDiagnosticLoggedAt = null;
+                _noUserHelperResetCount = 0;
                 return;
             }
 
@@ -404,6 +450,7 @@ internal sealed class IdleShutdownService : ServiceBase
             {
                 _noUserTracker.ObserveLoggedOnUser();
                 _noUserDiagnosticLoggedAt = null;
+                _noUserHelperResetCount = 0;
 
                 Log.Write(
                     "No-user shutdown cancelled because a logged-on " +
@@ -429,9 +476,11 @@ internal sealed class IdleShutdownService : ServiceBase
 
         Log.Write("No-user timeout reached after final input check.");
 
-        RequestShutdown(
+        ScheduleMachineStateShutdown(
             "no logged-on user timeout",
-            config);
+            config,
+            PendingShutdownKind.NoUser,
+            null);
     }
 
     private void WriteNoUserDiagnosticIfDue(
@@ -457,10 +506,12 @@ internal sealed class IdleShutdownService : ServiceBase
             $"DRY RUN no-user diagnostic: service heartbeat; " +
             $"consoleSession={machineState.ConsoleSessionId?.ToString() ?? "unavailable"}; " +
             $"wtsLastInput={machineState.ConsoleLastInputTime?.ToString("O") ?? "unavailable"}; " +
+            $"helperResets={_noUserHelperResetCount}; " +
             $"observation={observation}; " +
             $"timerSeconds={_noUserTracker.GetElapsedSeconds(now):F0}.");
 
         _noUserDiagnosticLoggedAt = now;
+        _noUserHelperResetCount = 0;
     }
 
     private static PipeSecurity CreatePipeSecurity()
@@ -537,7 +588,7 @@ internal sealed class IdleShutdownService : ServiceBase
                         "Shutdown requested by interactive agent " +
                         "after idle warning.");
 
-                    RequestShutdown(
+                    RequestImmediateShutdown(
                         "interactive idle timeout",
                         config);
                 }
@@ -545,6 +596,11 @@ internal sealed class IdleShutdownService : ServiceBase
                 {
                     // Input movement is intentionally not logged. It may be
                     // reported many times while the lock screen is active.
+                }
+                else if (TryHandleMachineInputCommand(command))
+                {
+                    // The console-session helper reports only changes, and
+                    // physical input is intentionally not written to the log.
                 }
                 else
                 {
@@ -592,6 +648,35 @@ internal sealed class IdleShutdownService : ServiceBase
             return false;
         }
 
+        HandleSessionInput(sessionId);
+        return true;
+    }
+
+    private bool TryHandleMachineInputCommand(string? command)
+    {
+        const string prefix = "MACHINE_INPUT:";
+
+        if (
+            command is null ||
+            !command.StartsWith(
+                prefix,
+                StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(
+                command[prefix.Length..],
+                out var sessionId) ||
+            sessionId < 0)
+        {
+            return false;
+        }
+
+        HandleSessionInput(sessionId);
+        return true;
+    }
+
+    private void HandleSessionInput(int sessionId)
+    {
+        var cancelPending = false;
+
         lock (_sync)
         {
             if (_lockedSince.ContainsKey(sessionId))
@@ -604,12 +689,205 @@ internal sealed class IdleShutdownService : ServiceBase
 
                 _lockedPipeResetCount[sessionId] = resetCount + 1;
             }
+
+            if (_noUserTracker.ObserveExternalInput(
+                    DateTime.UtcNow,
+                    sessionId))
+            {
+                _noUserHelperResetCount++;
+            }
+
+            cancelPending =
+                _pendingShutdown is
+                {
+                    Kind: PendingShutdownKind.NoUser
+                } ||
+                _pendingShutdown is
+                {
+                    Kind: PendingShutdownKind.LockedSession,
+                    SessionId: var pendingSessionId
+                } &&
+                pendingSessionId == sessionId;
         }
 
-        return true;
+        if (cancelPending)
+        {
+            CancelPendingShutdown(
+                $"physical input was detected in console session {sessionId}");
+        }
     }
 
-    private static void RequestShutdown(
+    private void ScheduleMachineStateShutdown(
+        string reason,
+        AppConfig config,
+        PendingShutdownKind kind,
+        int? sessionId)
+    {
+        if (config.DryRun)
+        {
+            Log.Write(
+                $"DRY RUN: {MachineStateShutdownGraceSeconds}-second " +
+                $"shutdown grace period skipped ({reason}).");
+
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (_pendingShutdown is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                Process.Start(
+                    new ProcessStartInfo
+                    {
+                        FileName = Path.Combine(
+                            Environment.SystemDirectory,
+                            "shutdown.exe"),
+
+                        Arguments =
+                            $"/s /t {MachineStateShutdownGraceSeconds} " +
+                            $"/d p:0:0 " +
+                            $"/c \"Automatic shutdown: {reason}. " +
+                            $"Sign in or unlock this computer to cancel.\"",
+
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+
+                _pendingShutdown = new PendingShutdown(
+                    kind,
+                    sessionId,
+                    reason);
+
+                Log.Write(
+                    $"Shutdown scheduled in " +
+                    $"{MachineStateShutdownGraceSeconds} second(s) " +
+                    $"({reason}); sign-in or unlock will cancel it.");
+            }
+            catch (Exception ex)
+            {
+                Log.Write(
+                    $"Shutdown scheduling failed: " +
+                    $"{ex.GetType().Name}: {ex.Message}");
+
+                return;
+            }
+        }
+
+        // Close the small race between the final pre-shutdown state read and
+        // scheduling the grace period. Later changes are covered by session
+        // notifications and the periodic state check.
+        try
+        {
+            CancelPendingShutdownIfUserBecameActive(
+                SessionManager.GetMachineSessionState());
+        }
+        catch (Exception ex)
+        {
+            Log.Write(
+                $"Post-schedule state check failed: " +
+                $"{ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private void CancelPendingShutdownIfUserBecameActive(
+        MachineSessionState machineState)
+    {
+        PendingShutdown? pending;
+
+        lock (_sync)
+        {
+            pending = _pendingShutdown;
+        }
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        var shouldCancel = pending.Kind switch
+        {
+            PendingShutdownKind.NoUser =>
+                machineState.LoggedOnSessions.Count > 0,
+
+            PendingShutdownKind.LockedSession =>
+                machineState.LoggedOnSessions.Any(
+                    session =>
+                        session.SessionId == pending.SessionId &&
+                        !session.IsLocked),
+
+            _ => false
+        };
+
+        if (shouldCancel)
+        {
+            CancelPendingShutdown(
+                "a user signed in or unlocked the computer");
+        }
+    }
+
+    private void CancelPendingShutdown(string cancellationReason)
+    {
+        lock (_sync)
+        {
+            if (_pendingShutdown is null)
+            {
+                return;
+            }
+
+            try
+            {
+                using var process = Process.Start(
+                    new ProcessStartInfo
+                    {
+                        FileName = Path.Combine(
+                            Environment.SystemDirectory,
+                            "shutdown.exe"),
+
+                        Arguments = "/a",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+
+                if (process is null)
+                {
+                    throw new InvalidOperationException(
+                        "shutdown.exe did not start.");
+                }
+
+                if (!process.WaitForExit(5000))
+                {
+                    throw new System.TimeoutException(
+                        "shutdown.exe /a did not exit within 5 seconds.");
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"shutdown.exe /a exited with code " +
+                        $"{process.ExitCode}.");
+                }
+
+                Log.Write(
+                    $"Pending shutdown cancelled because " +
+                    $"{cancellationReason} ({_pendingShutdown.Reason}).");
+
+                _pendingShutdown = null;
+            }
+            catch (Exception ex)
+            {
+                Log.Write(
+                    $"Pending shutdown cancellation failed: " +
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    private static void RequestImmediateShutdown(
         string reason,
         AppConfig config)
     {
@@ -646,5 +924,16 @@ internal sealed class IdleShutdownService : ServiceBase
                 $"Shutdown failed: " +
                 $"{ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    private sealed record PendingShutdown(
+        PendingShutdownKind Kind,
+        int? SessionId,
+        string Reason);
+
+    private enum PendingShutdownKind
+    {
+        LockedSession,
+        NoUser
     }
 }

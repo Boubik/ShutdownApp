@@ -3,8 +3,13 @@ namespace IdleShutdown.AgentApp;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (MachineInputMonitor.TryRun(args))
+        {
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
 
         using var mutex = new Mutex(

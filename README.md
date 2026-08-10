@@ -10,6 +10,7 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 - Odemčená relace: po `IdleMinutes` nečinnosti se zobrazí odpočet `WarningSeconds`. Libovolný nový vstup nebo tlačítko v dialogu vypnutí zruší.
 - Zamčená relace: služba vypne počítač po `LockedMinutes` bez popupu. Vstup na zamykací obrazovce timer resetuje a těsně před vypnutím se kontroluje ještě jednou.
 - Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce spustí celý timeout znovu.
+- Vypnutí ze zamčeného nebo nepřihlášeného stavu má navíc 60sekundovou systémovou ochrannou lhůtu. Nový vstup, přihlášení nebo odemknutí během ní naplánované vypnutí zruší.
 - `PauseWhenFullscreen`: před varováním se kontrolují systémové power/execution requests a poté skutečný fullscreen foreground okna.
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
 - Popup automaticky používá jazyk Windows (`cs`, `en`, `de`, `es`; ostatní jazyky použijí angličtinu).
@@ -66,6 +67,12 @@ bezpečně vyčistí.
 Aktuální verze projektu je uložena pouze v kořenovém souboru `VERSION`.
 Tuto hodnotu automaticky používají assembly služby i agenta a Chocolatey
 balíček. Před vydáním nové verze tedy stačí změnit právě tento soubor.
+
+Po pushnutí změny souboru `VERSION` do větve `main` spustí GitHub Actions
+automaticky testy a kompletní Windows build. Workflow ověří shodu verze v
+assembly i `.nupkg`, vytvoří tag `v<verze>` a GitHub Release s balíčkem
+`idle-shutdown.nupkg`. Release notes obsahují commity od předchozího release
+tagu. Push bez změny `VERSION` nový release nevytvoří.
 
 ## Lokální instalace
 
@@ -133,10 +140,12 @@ Pro ověření stavů doporučujeme nejprve použít `DryRun:true` a krátké ti
 - po odhlášení se lock timer zruší a začne nový `NoUserMinutes` timer.
 
 Agent při zamčení kontroluje session-specific input každých 250 ms a posílá
-službě pouze tiché resety timeru. Před přihlášením služba sleduje WTS čas
-posledního vstupu přímo ve fyzické konzolové relaci a před vypnutím znovu ověří
-vstup i přihlášení uživatele. Jednotlivé pohyby a stisky se proto do logu
-nezapisují.
+službě pouze tiché resety timeru. Služba navíc spouští skrytý monitor přímo ve
+fyzické konzolové relaci; ten pokrývá i přihlašovací obrazovku po restartu nebo
+odhlášení, kde WTS na některých Windows neposkytuje `LastInputTime`. Před
+vypnutím se znovu ověří vstup i přihlášení uživatele a následuje zrušitelná
+60sekundová ochranná lhůta. Jednotlivé pohyby a stisky se do logu nezapisují;
+v režimu `DryRun` je v diagnostice pouze souhrnný čítač `helperResets`.
 
 ## Odinstalace
 

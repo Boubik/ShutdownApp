@@ -71,6 +71,21 @@ internal sealed class NoUserActivityTracker
         }
     }
 
+    public bool ObserveExternalInput(
+        DateTime now,
+        int sessionId)
+    {
+        if (
+            !_inactiveSince.HasValue ||
+            _consoleSessionId != sessionId)
+        {
+            return false;
+        }
+
+        _inactiveSince = now;
+        return true;
+    }
+
     private void StartMonitoring(
         DateTime now,
         int? consoleSessionId,

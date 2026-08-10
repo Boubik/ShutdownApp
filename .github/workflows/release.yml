@@ -1,0 +1,186 @@
+name: Build and release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - VERSION
+
+permissions:
+  contents: write
+
+concurrency:
+  group: idle-shutdown-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Read and validate release version
+        id: version
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+              throw "VERSION must contain a semantic version such as 1.2.3. Received: '$version'."
+          }
+
+          $tag = "v$version"
+          git fetch --force --tags
+
+          if (git rev-parse --quiet --verify "refs/tags/$tag") {
+              throw "Tag $tag already exists. Increase VERSION before creating another release."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          "### Preparing Idle Shutdown $tag" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Run tests and build Windows package
+        run: .\build.bat
+
+      - name: Verify release artifacts
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $packagePath = 'dist\package\idle-shutdown.nupkg'
+
+          if (-not (Test-Path $packagePath)) {
+              throw "Expected package is missing: $packagePath"
+          }
+
+          $packages = @(Get-ChildItem 'dist\package' -Filter '*.nupkg' -File)
+          if ($packages.Count -ne 1) {
+              throw "Expected exactly one .nupkg, found $($packages.Count)."
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $packagePath))
+
+          try {
+              $nuspecEntry = $archive.Entries |
+                  Where-Object { $_.FullName -eq 'idle-shutdown.nuspec' } |
+                  Select-Object -First 1
+
+              if ($null -eq $nuspecEntry) {
+                  throw 'The package does not contain idle-shutdown.nuspec.'
+              }
+
+              $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())
+              try {
+                  [xml] $nuspec = $reader.ReadToEnd()
+              }
+              finally {
+                  $reader.Dispose()
+              }
+          }
+          finally {
+              $archive.Dispose()
+          }
+
+          $versionNode = $nuspec.SelectSingleNode(
+              "/*[local-name()='package']/*[local-name()='metadata']/*[local-name()='version']")
+
+          if ($null -eq $versionNode) {
+              throw 'The package nuspec does not contain a version element.'
+          }
+
+          $packageVersion = $versionNode.InnerText.Trim()
+          if ($packageVersion -ne $env:RELEASE_VERSION) {
+              throw "Package version '$packageVersion' does not match VERSION '$env:RELEASE_VERSION'."
+          }
+
+          foreach ($executable in @(
+              'dist\Service\IdleShutdown.Service.exe',
+              'dist\Agent\IdleShutdown.Agent.exe'
+          )) {
+              if (-not (Test-Path $executable)) {
+                  throw "Expected executable is missing: $executable"
+              }
+
+              $productVersion = (Get-Item $executable).VersionInfo.ProductVersion
+              if ($productVersion -notlike "$($env:RELEASE_VERSION)*") {
+                  throw "$executable has product version '$productVersion', expected '$env:RELEASE_VERSION'."
+              }
+          }
+
+          "- Verified package and executable version: ``$env:RELEASE_VERSION``" |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Generate release notes from commits
+        id: notes
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          $previousTag = @(
+              git tag --merged HEAD --sort=-version:refname 'v[0-9]*'
+          ) | Select-Object -First 1
+
+          if ([string]::IsNullOrWhiteSpace($previousTag)) {
+              $range = 'HEAD'
+              $sinceText = 'the beginning of the repository'
+              $commits = @(git log HEAD --no-merges --pretty=format:'- %s (`%h`)')
+          }
+          else {
+              $range = "$previousTag..HEAD"
+              $sinceText = $previousTag
+              $commits = @(git log $range --no-merges --pretty=format:'- %s (`%h`)')
+          }
+
+          if ($commits.Count -eq 0) {
+              $commits = @('- Version metadata update.')
+          }
+
+          $notes = @(
+              "# Idle Shutdown v$env:RELEASE_VERSION",
+              '',
+              "## Changes since $sinceText",
+              '',
+              $commits,
+              '',
+              '## Download',
+              '',
+              '- `idle-shutdown.nupkg` — self-contained Windows x64 service, agent and Chocolatey installer.'
+          )
+
+          $notes | Out-File -FilePath 'release-notes.md' -Encoding utf8
+
+          "previous_tag=$previousTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "- Release notes contain $($commits.Count) commit(s) since $sinceText." |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create $env:RELEASE_TAG `
+              'dist\package\idle-shutdown.nupkg' `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA `
+              --title "Idle Shutdown $env:RELEASE_TAG" `
+              --notes-file 'release-notes.md' `
+              --latest
+
+          "- Published release: ``$env:RELEASE_TAG``" |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

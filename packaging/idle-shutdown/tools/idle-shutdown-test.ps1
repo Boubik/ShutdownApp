@@ -35,9 +35,20 @@ elseif ($task.State -eq 'Disabled') {
 }
 
 $interactiveShell = Get-Process 'explorer' -ErrorAction SilentlyContinue
-$agentProcess = Get-Process 'IdleShutdown.Agent' -ErrorAction SilentlyContinue
+$interactiveSessionIds = @(
+    $interactiveShell |
+        Select-Object -ExpandProperty SessionId -Unique)
 
-if ($null -ne $interactiveShell -and $null -eq $agentProcess) {
+$interactiveAgent = @(
+    Get-CimInstance Win32_Process -Filter "Name = 'IdleShutdown.Agent.exe'" `
+        -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.SessionId -in $interactiveSessionIds -and
+            -not [string]::IsNullOrWhiteSpace($_.CommandLine) -and
+            $_.CommandLine -notmatch '--machine-input-monitor'
+        })
+
+if ($null -ne $interactiveShell -and $interactiveAgent.Count -eq 0) {
     $errors.Add(
         'An interactive user is logged on, but IdleShutdown.Agent is not running. ' +
         'Start the scheduled task or sign out and sign in again.')

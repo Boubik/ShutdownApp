@@ -15,6 +15,7 @@ internal sealed record MachineSessionState(
 internal static class SessionManager
 {
     private const int WtsUserName = 5;
+    private const int WtsSessionInfoClass = 24;
     private const int WtsSessionInfoEx = 25;
     private const int WtsDisconnected = 4;
     private const int WtsSessionStateLock = 0;
@@ -70,6 +71,34 @@ internal static class SessionManager
         public int OutgoingFrames;
         public int IncomingCompressedBytes;
         public int OutgoingCompressedBytes;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WtsInfo
+    {
+        public int State;
+        public int SessionId;
+        public int IncomingBytes;
+        public int OutgoingBytes;
+        public int IncomingFrames;
+        public int OutgoingFrames;
+        public int IncomingCompressedBytes;
+        public int OutgoingCompressedBytes;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string WinStationName;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 17)]
+        public string DomainName;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 21)]
+        public string UserName;
+
+        public long ConnectTime;
+        public long DisconnectTime;
+        public long LastInputTime;
+        public long LogonTime;
+        public long CurrentTime;
     }
 
     [DllImport("wtsapi32.dll", SetLastError = true)]
@@ -134,7 +163,10 @@ internal static class SessionManager
                 var userName = extended?.UserName ??
                                QueryString(item.SessionId, WtsUserName);
 
-                var lastInputTime = GetLastInputTime(extended);
+                var lastInputTime =
+                    GetLastInputTime(extended) ??
+                    GetLastInputTime(
+                        QueryBasicInfo(item.SessionId));
 
                 if (item.SessionId == consoleSessionId)
                 {
@@ -184,8 +216,11 @@ internal static class SessionManager
 
     public static DateTime? GetLastInputTime(int sessionId)
     {
-        return GetLastInputTime(
-            QueryExtendedInfo(sessionId));
+        return
+            GetLastInputTime(
+                QueryExtendedInfo(sessionId)) ??
+            GetLastInputTime(
+                QueryBasicInfo(sessionId));
     }
 
     private static DateTime? GetLastInputTime(
@@ -204,6 +239,58 @@ internal static class SessionManager
         catch (ArgumentOutOfRangeException)
         {
             return null;
+        }
+    }
+
+    private static DateTime? GetLastInputTime(
+        WtsInfo? info)
+    {
+        if (info is not { LastInputTime: > 0 })
+        {
+            return null;
+        }
+
+        try
+        {
+            return DateTime.FromFileTimeUtc(
+                info.Value.LastInputTime);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private static WtsInfo? QueryBasicInfo(int sessionId)
+    {
+        IntPtr buffer = IntPtr.Zero;
+
+        try
+        {
+            if (!WTSQuerySessionInformation(
+                    IntPtr.Zero,
+                    sessionId,
+                    WtsSessionInfoClass,
+                    out buffer,
+                    out var bytesReturned) ||
+                buffer == IntPtr.Zero ||
+                bytesReturned < Marshal.SizeOf<WtsInfo>())
+            {
+                return null;
+            }
+
+            return Marshal.PtrToStructure<WtsInfo>(buffer);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero)
+            {
+                WTSFreeMemory(buffer);
+            }
         }
     }
 

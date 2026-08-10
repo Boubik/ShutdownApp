@@ -110,6 +110,35 @@ var tests = new (string Name, Action Run)[]
             tracker.ObserveNoUser(start.AddSeconds(60), Minutes(1), 1, Utc(59)));
     }),
 
+    ("console helper input resets no-user timeout", () =>
+    {
+        var tracker = new NoUserActivityTracker();
+        var start = Utc(0);
+
+        tracker.ObserveNoUser(start, Minutes(1), 1, null);
+
+        Expect(true, tracker.ObserveExternalInput(start.AddSeconds(59), 1));
+        Expect(
+            NoUserObservation.Waiting,
+            tracker.ObserveNoUser(start.AddSeconds(60), Minutes(1), 1, null));
+        Expect(
+            NoUserObservation.TimeoutReached,
+            tracker.ObserveNoUser(start.AddSeconds(119), Minutes(1), 1, null));
+    }),
+
+    ("console helper ignores input from a different session", () =>
+    {
+        var tracker = new NoUserActivityTracker();
+        var start = Utc(0);
+
+        tracker.ObserveNoUser(start, Minutes(1), 1, null);
+
+        Expect(false, tracker.ObserveExternalInput(start.AddSeconds(59), 2));
+        Expect(
+            NoUserObservation.TimeoutReached,
+            tracker.ObserveNoUser(start.AddSeconds(60), Minutes(1), 1, null));
+    }),
+
     ("unchanged and changed WTS timestamps are distinguished", () =>
     {
         var input = Utc(10);

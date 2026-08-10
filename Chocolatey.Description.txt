@@ -9,6 +9,8 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Detects mouse and keyboard activity on the Windows sign-in screen before any user logs on and resets the no-user timer.
 - Performs one final lock-screen input check immediately before shutdown to avoid powering off while somebody is entering a password.
 - Performs a final no-user state and console-input check immediately before shutdown.
+- Runs a hidden input monitor in the physical console session, covering sign-in screens where Windows WTS does not expose LastInputTime.
+- Uses a cancellable 60-second final grace period for locked/no-user shutdowns; physical input, sign-in or unlock cancels it.
 - Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
 - Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
 - Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.
