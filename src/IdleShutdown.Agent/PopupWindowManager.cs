@@ -9,6 +9,7 @@ internal static class PopupWindowManager
 
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
 
     private const int SwRestore = 9;
@@ -113,6 +114,31 @@ internal static class PopupWindowManager
                     false);
             }
         }
+    }
+
+    public static void KeepTopmostWithoutActivation(
+        Form form)
+    {
+        if (
+            form.IsDisposed ||
+            !form.IsHandleCreated)
+        {
+            return;
+        }
+
+        form.TopMost = true;
+
+        SetWindowPos(
+            form.Handle,
+            HwndTopmost,
+            0,
+            0,
+            0,
+            0,
+            SwpNoMove |
+            SwpNoSize |
+            SwpNoActivate |
+            SwpShowWindow);
     }
 
     [DllImport(

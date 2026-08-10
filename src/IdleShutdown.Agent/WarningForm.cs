@@ -20,6 +20,7 @@ internal sealed class WarningForm : Form
     private readonly UiStrings _ui;
     private readonly UiPalette _palette;
     private readonly long _machineActivityVersion;
+    private TimeSpan _lastTopmostRefreshAt;
 
     private readonly Label _countdownLabel;
     private readonly Label _statusLabel;
@@ -284,6 +285,14 @@ internal sealed class WarningForm : Form
             CancelShutdown(
                 WarningCancellationReason.LocalInput);
             return;
+        }
+
+        if (
+            _countdown.Elapsed - _lastTopmostRefreshAt >=
+            TimeSpan.FromMilliseconds(500))
+        {
+            PopupWindowManager.KeepTopmostWithoutActivation(this);
+            _lastTopmostRefreshAt = _countdown.Elapsed;
         }
 
         var remaining =

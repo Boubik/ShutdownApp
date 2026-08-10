@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3
+
+- Periodically restores the warning dialog to the top of the Windows topmost band so Explorer, installer and updater windows cannot cover it.
+- Reasserts topmost position without activating the window or repeatedly stealing keyboard focus.
+- Treats a foreground installer or updater as protected activity, including localized setup-wizard titles.
+
 ## 1.3.2
 
 - Resets the complete inactivity timer only after a verified local input tick change, the Continue button, or verified activity from another session.

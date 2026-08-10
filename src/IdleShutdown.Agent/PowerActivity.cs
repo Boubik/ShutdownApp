@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using IdleShutdown.Shared;
 
 namespace IdleShutdown.AgentApp;
@@ -23,7 +24,7 @@ internal static class PowerActivity
             "ApplicationFrameHost"
         };
 
-    public static bool ShouldPauseForPresentation()
+    public static bool ShouldPauseForProtectedActivity()
     {
         // Preferred signal: an application explicitly tells Windows that the
         // display must remain active for presentation or media playback.
@@ -32,9 +33,61 @@ internal static class PowerActivity
             return true;
         }
 
+        if (IsForegroundInstallerOrUpdater())
+        {
+            return true;
+        }
+
         // Fallback for applications that do not create a Windows power
         // request but really occupy the complete foreground monitor.
         return IsForegroundWindowTrulyFullscreen();
+    }
+
+    private static bool IsForegroundInstallerOrUpdater()
+    {
+        var window = GetForegroundWindow();
+
+        if (window == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        GetWindowThreadProcessId(window, out var processId);
+
+        if (processId == 0)
+        {
+            return false;
+        }
+
+        string? processName;
+
+        try
+        {
+            using var process = Process.GetProcessById(
+                unchecked((int)processId));
+            processName = process.ProcessName;
+        }
+        catch
+        {
+            processName = null;
+        }
+
+        var titleLength = GetWindowTextLength(window);
+        string? windowTitle = null;
+
+        if (titleLength > 0)
+        {
+            var title = new StringBuilder(titleLength + 1);
+
+            if (GetWindowText(window, title, title.Capacity) > 0)
+            {
+                windowTitle = title.ToString();
+            }
+        }
+
+        return ForegroundProtectionPolicy.IsInstallerOrUpdater(
+            processName,
+            windowTitle);
     }
 
     private static bool HasActiveWindowsDisplayRequest()
@@ -178,6 +231,16 @@ internal static class PowerActivity
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(
+        IntPtr window,
+        StringBuilder text,
+        int maximumCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(
+        IntPtr window);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

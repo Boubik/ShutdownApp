@@ -158,7 +158,7 @@ internal sealed class AgentApplicationContext : ApplicationContext
 
         if (
             config.PauseWhenFullscreen &&
-            PowerActivity.ShouldPauseForPresentation())
+            PowerActivity.ShouldPauseForProtectedActivity())
         {
             if (joiningSharedWarning)
             {
@@ -171,8 +171,8 @@ internal sealed class AgentApplicationContext : ApplicationContext
             {
                 Log.Write(
                     "Idle timeout reached, but shutdown was " +
-                    "deferred by an active power request or " +
-                    "a fullscreen foreground window.");
+                    "deferred by an active display request, " +
+                    "installer/updater or fullscreen foreground window.");
 
                 _presentationDeferralLogged = true;
             }

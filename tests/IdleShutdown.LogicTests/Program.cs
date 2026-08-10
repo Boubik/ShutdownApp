@@ -324,6 +324,35 @@ var tests = new (string Name, Action Run)[]
         Expect(
             true,
             WarningDisplayPolicy.HasVerifiedLocalInput(20, 21));
+    }),
+
+    ("foreground installer detection is conservative", () =>
+    {
+        Expect(
+            true,
+            ForegroundProtectionPolicy.IsInstallerOrUpdater(
+                "ONLYOFFICE-DesktopEditors-x64",
+                "Průvodce instalací - ONLYOFFICE"));
+        Expect(
+            true,
+            ForegroundProtectionPolicy.IsInstallerOrUpdater(
+                "setup",
+                "ONLYOFFICE"));
+        Expect(
+            true,
+            ForegroundProtectionPolicy.IsInstallerOrUpdater(
+                "unins000",
+                "Application"));
+        Expect(
+            false,
+            ForegroundProtectionPolicy.IsInstallerOrUpdater(
+                "explorer",
+                "Stažené soubory"));
+        Expect(
+            false,
+            ForegroundProtectionPolicy.IsInstallerOrUpdater(
+                "DesktopEditors",
+                "Document.docx - ONLYOFFICE"));
     })
 };
 

@@ -14,6 +14,9 @@
       Include="..\..\src\IdleShutdown.Agent\WarningDisplayPolicy.cs"
       Link="WarningDisplayPolicy.cs" />
     <Compile
+      Include="..\..\src\IdleShutdown.Agent\ForegroundProtectionPolicy.cs"
+      Link="ForegroundProtectionPolicy.cs" />
+    <Compile
       Include="..\..\src\IdleShutdown.Service\NoUserActivityTracker.cs"
       Link="NoUserActivityTracker.cs" />
     <Compile
