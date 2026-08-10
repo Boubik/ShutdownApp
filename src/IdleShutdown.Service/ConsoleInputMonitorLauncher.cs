@@ -7,15 +7,12 @@ namespace IdleShutdown.ServiceApp;
 
 internal sealed class ConsoleInputMonitorLauncher
 {
-    private const uint TokenAssignPrimary = 0x0001;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const uint MaximumAllowed = 0x02000000;
     private const uint TokenDuplicate = 0x0002;
     private const uint TokenQuery = 0x0008;
-    private const uint TokenAdjustPrivileges = 0x0020;
-    private const uint TokenAdjustSessionId = 0x0100;
-    private const uint SePrivilegeEnabled = 0x00000002;
     private const int SecurityImpersonation = 2;
     private const int TokenPrimary = 1;
-    private const int TokenSessionId = 12;
 
     private readonly object _sync = new();
     private Process? _process;
@@ -111,50 +108,11 @@ internal sealed class ConsoleInputMonitorLauncher
                 executable);
         }
 
-        EnablePrivilege("SeTcbPrivilege");
-
-        IntPtr sourceToken = IntPtr.Zero;
-        IntPtr primaryToken = IntPtr.Zero;
+        var primaryToken = DuplicateConsoleSessionSystemToken(sessionId);
         var processInfo = new ProcessInformation();
 
         try
         {
-            if (!OpenProcessToken(
-                    Process.GetCurrentProcess().Handle,
-                    TokenAssignPrimary |
-                    TokenDuplicate |
-                    TokenQuery |
-                    TokenAdjustSessionId,
-                    out sourceToken))
-            {
-                throw LastWin32("OpenProcessToken");
-            }
-
-            if (!DuplicateTokenEx(
-                    sourceToken,
-                    TokenAssignPrimary |
-                    TokenDuplicate |
-                    TokenQuery |
-                    TokenAdjustSessionId,
-                    IntPtr.Zero,
-                    SecurityImpersonation,
-                    TokenPrimary,
-                    out primaryToken))
-            {
-                throw LastWin32("DuplicateTokenEx");
-            }
-
-            var targetSession = unchecked((uint)sessionId);
-
-            if (!SetTokenInformation(
-                    primaryToken,
-                    TokenSessionId,
-                    ref targetSession,
-                    sizeof(uint)))
-            {
-                throw LastWin32("SetTokenInformation(TokenSessionId)");
-            }
-
             var startupInfo = new StartupInfo
             {
                 Size = Marshal.SizeOf<StartupInfo>()
@@ -187,63 +145,89 @@ internal sealed class ConsoleInputMonitorLauncher
             CloseIfValid(processInfo.Thread);
             CloseIfValid(processInfo.Process);
             CloseIfValid(primaryToken);
-            CloseIfValid(sourceToken);
         }
     }
 
-    private static void EnablePrivilege(string privilegeName)
+    private static IntPtr DuplicateConsoleSessionSystemToken(
+        int sessionId)
     {
-        IntPtr token = IntPtr.Zero;
+        var matchingWinlogonFound = false;
+        Exception? lastError = null;
 
-        try
+        foreach (var candidate in Process.GetProcessesByName("winlogon"))
         {
-            if (!OpenProcessToken(
-                    Process.GetCurrentProcess().Handle,
-                    TokenQuery | TokenAdjustPrivileges,
-                    out token))
+            using (candidate)
             {
-                throw LastWin32("OpenProcessToken");
-            }
-
-            if (!LookupPrivilegeValue(
-                    null,
-                    privilegeName,
-                    out var luid))
-            {
-                throw LastWin32("LookupPrivilegeValue");
-            }
-
-            var privileges = new TokenPrivileges
-            {
-                PrivilegeCount = 1,
-                Privileges = new LuidAndAttributes
+                if (
+                    !ProcessIdToSessionId(
+                        unchecked((uint)candidate.Id),
+                        out var candidateSessionId) ||
+                    candidateSessionId != unchecked((uint)sessionId))
                 {
-                    Luid = luid,
-                    Attributes = SePrivilegeEnabled
+                    continue;
                 }
-            };
 
-            if (!AdjustTokenPrivileges(
-                    token,
-                    false,
-                    ref privileges,
-                    0,
-                    IntPtr.Zero,
-                    IntPtr.Zero))
-            {
-                throw LastWin32("AdjustTokenPrivileges");
-            }
+                matchingWinlogonFound = true;
+                IntPtr processHandle = IntPtr.Zero;
+                IntPtr sourceToken = IntPtr.Zero;
 
-            var error = Marshal.GetLastWin32Error();
-            if (error != 0)
-            {
-                throw new Win32Exception(error, "AdjustTokenPrivileges failed.");
+                try
+                {
+                    processHandle = OpenProcess(
+                        ProcessQueryLimitedInformation,
+                        false,
+                        unchecked((uint)candidate.Id));
+
+                    if (processHandle == IntPtr.Zero)
+                    {
+                        throw LastWin32("OpenProcess(winlogon)");
+                    }
+
+                    if (!OpenProcessToken(
+                            processHandle,
+                            TokenDuplicate | TokenQuery,
+                            out sourceToken))
+                    {
+                        throw LastWin32("OpenProcessToken(winlogon)");
+                    }
+
+                    if (!DuplicateTokenEx(
+                            sourceToken,
+                            MaximumAllowed,
+                            IntPtr.Zero,
+                            SecurityImpersonation,
+                            TokenPrimary,
+                            out var primaryToken))
+                    {
+                        throw LastWin32("DuplicateTokenEx(winlogon)");
+                    }
+
+                    return primaryToken;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+                finally
+                {
+                    CloseIfValid(sourceToken);
+                    CloseIfValid(processHandle);
+                }
             }
         }
-        finally
+
+        if (!matchingWinlogonFound)
         {
-            CloseIfValid(token);
+            throw new InvalidOperationException(
+                $"No winlogon process was found in console session " +
+                $"{sessionId}.");
         }
+
+        throw new InvalidOperationException(
+            $"The winlogon token in console session {sessionId} " +
+            $"could not be duplicated: " +
+            $"{lastError?.Message ?? "unknown error"}",
+            lastError);
     }
 
     private static Win32Exception LastWin32(string operation)
@@ -258,27 +242,6 @@ internal sealed class ConsoleInputMonitorLauncher
         {
             CloseHandle(handle);
         }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Luid
-    {
-        public uint LowPart;
-        public int HighPart;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct LuidAndAttributes
-    {
-        public Luid Luid;
-        public uint Attributes;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct TokenPrivileges
-    {
-        public uint PrivilegeCount;
-        public LuidAndAttributes Privileges;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -328,31 +291,6 @@ internal sealed class ConsoleInputMonitorLauncher
         int tokenType,
         out IntPtr newToken);
 
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool SetTokenInformation(
-        IntPtr tokenHandle,
-        int tokenInformationClass,
-        ref uint tokenInformation,
-        int tokenInformationLength);
-
-    [DllImport(
-        "advapi32.dll",
-        CharSet = CharSet.Unicode,
-        SetLastError = true)]
-    private static extern bool LookupPrivilegeValue(
-        string? systemName,
-        string name,
-        out Luid luid);
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool AdjustTokenPrivileges(
-        IntPtr tokenHandle,
-        bool disableAllPrivileges,
-        ref TokenPrivileges newState,
-        int bufferLength,
-        IntPtr previousState,
-        IntPtr returnLength);
-
     [DllImport(
         "advapi32.dll",
         CharSet = CharSet.Unicode,
@@ -369,6 +307,17 @@ internal sealed class ConsoleInputMonitorLauncher
         string? currentDirectory,
         ref StartupInfo startupInfo,
         out ProcessInformation processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(
+        uint desiredAccess,
+        bool inheritHandle,
+        uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ProcessIdToSessionId(
+        uint processId,
+        out uint sessionId);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
