@@ -32,15 +32,15 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 
 ## Default configuration
 
-- `IdleMinutes`: `60`
+- `IdleMinutes`: `90`
 - `WarningSeconds`: `300`
-- `LockedMinutes`: `60`
-- `NoUserMinutes`: `60`
+- `LockedMinutes`: `90`
+- `NoUserMinutes`: `90`
 - `CheckIntervalSeconds`: `5`
 - `PauseWhenFullscreen`: `true`
 - `DryRun`: `false`
 
-With these defaults, an unlocked computer shuts down after approximately 60 minutes of inactivity plus a 5-minute warning. A locked computer shuts down after 60 minutes without lock-screen activity, and a computer without a logged-on user shuts down after 60 minutes.
+With these defaults, an unlocked computer shuts down after approximately 90 minutes of inactivity plus a 5-minute warning. A locked computer shuts down after 90 minutes without lock-screen activity, and a computer without a logged-on user shuts down after 90 minutes.
 
 ## Chocolatey package parameters
 
