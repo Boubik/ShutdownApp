@@ -8,7 +8,6 @@ internal sealed class AgentApplicationContext : ApplicationContext
     private const int LockedInputPollMilliseconds = 250;
     private const int SessionStateHeartbeatSeconds = 10;
     private const int SessionStateRetrySeconds = 2;
-    private const int WarningCoordinationSafetySeconds = 3;
 
     private readonly System.Windows.Forms.Timer _timer;
     private readonly int _sessionId;
@@ -143,9 +142,15 @@ internal sealed class AgentApplicationContext : ApplicationContext
             idle = machineIdle.Value;
         }
 
-        if (!IdleThreshold.IsReached(
+        var sharedWarningDeadlineUtc =
+            MachineWarningSignal.GetActiveDeadlineUtc();
+        var joiningSharedWarning = sharedWarningDeadlineUtc.HasValue;
+
+        if (!WarningDisplayPolicy.ShouldShow(
                 idle,
-                config.IdleMinutes))
+                config.IdleMinutes,
+                sharedWarningDeadlineUtc,
+                DateTime.UtcNow))
         {
             _presentationDeferralLogged = false;
             return;
@@ -155,6 +160,13 @@ internal sealed class AgentApplicationContext : ApplicationContext
             config.PauseWhenFullscreen &&
             PowerActivity.ShouldPauseForPresentation())
         {
+            if (joiningSharedWarning)
+            {
+                SendQuietCommand(
+                    $"SESSION_INPUT:{_sessionId}",
+                    out _);
+            }
+
             if (!_presentationDeferralLogged)
             {
                 Log.Write(
@@ -176,24 +188,29 @@ internal sealed class AgentApplicationContext : ApplicationContext
             var inputAtStart =
                 NativeMethods.GetIdleTime();
 
+            if (!sharedWarningDeadlineUtc.HasValue)
+            {
+                sharedWarningDeadlineUtc = SendWarningActive(
+                    config.WarningSeconds);
+            }
+
+            var visibleWarningSeconds =
+                WarningDisplayPolicy.GetVisibleSeconds(
+                    config.WarningSeconds,
+                    sharedWarningDeadlineUtc,
+                    DateTime.UtcNow);
+
             Log.Write(
                 $"Idle timeout reached after " +
                 $"{inputAtStart.TotalSeconds:F0} second(s); " +
-                $"showing a {config.WarningSeconds}-second warning.");
-
-            var coordinatedWarningDeadlineUtc = DateTime.UtcNow.AddSeconds(
-                config.WarningSeconds + WarningCoordinationSafetySeconds);
-
-            if (!SendWarningActive(coordinatedWarningDeadlineUtc))
-            {
-                Log.Write(
-                    "Warning coordination heartbeat could not be sent; " +
-                    "the service will still apply its local safety checks.");
-            }
+                $"showing a {visibleWarningSeconds}-second " +
+                (joiningSharedWarning
+                    ? "shared warning."
+                    : "warning."));
 
             using var dialog =
                 new WarningForm(
-                    config.WarningSeconds,
+                    visibleWarningSeconds,
                     inputAtStart);
 
             var result =
@@ -451,16 +468,18 @@ internal sealed class AgentApplicationContext : ApplicationContext
         return false;
     }
 
-    private bool SendWarningActive(DateTime deadlineUtc)
+    private DateTime? SendWarningActive(int warningSeconds)
     {
-        var command =
-            $"WARNING_ACTIVE:{_sessionId}:{deadlineUtc.Ticks}";
-
         for (var attempt = 1; attempt <= 3; attempt++)
         {
+            var deadlineUtc = DateTime.UtcNow.AddSeconds(
+                Math.Max(1, warningSeconds));
+            var command =
+                $"WARNING_ACTIVE:{_sessionId}:{deadlineUtc.Ticks}";
+
             if (SendQuietCommand(command, out _))
             {
-                return true;
+                return deadlineUtc;
             }
 
             if (attempt < 3)
@@ -469,6 +488,9 @@ internal sealed class AgentApplicationContext : ApplicationContext
             }
         }
 
-        return false;
+        Log.Write(
+            "Warning coordination heartbeat could not be sent; " +
+            "the service will still apply its local safety checks.");
+        return null;
     }
 }

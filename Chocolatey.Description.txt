@@ -4,19 +4,19 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 
 - Displays a warning dialog after a configurable period of inactivity in an unlocked user session.
 - Cancels the pending shutdown immediately when the user moves the mouse, presses a key or clicks **Continue working**.
-- Uses separate configurable timeouts for unlocked sessions, locked sessions and computers with no logged-on interactive user.
+- Uses one `IdleMinutes` inactivity timeout for unlocked, locked and no-user states, followed by one shared `WarningSeconds` protection period.
 - Detects mouse and keyboard activity on the Windows lock screen and resets the locked-session timer.
 - Detects mouse and keyboard activity on the Windows sign-in screen before any user logs on and resets the no-user timer.
 - Performs one final lock-screen input check immediately before shutdown to avoid powering off while somebody is entering a password.
 - Performs a final no-user state and console-input check immediately before shutdown.
 - Runs a hidden input monitor in the physical console session, covering sign-in screens where Windows WTS does not expose LastInputTime.
-- Uses a cancellable 60-second final grace period for locked/no-user shutdowns; physical input, sign-in or unlock cancels it.
+- Uses `WarningSeconds` as a cancellable final silent warning period for locked/no-user shutdowns; physical input, sign-in or unlock cancels it.
 - Uses a non-forced final Windows shutdown request so applications with unsaved work can still block shutdown instead of being terminated automatically.
 - Defers every shutdown while Windows reports a system/display power request, Windows Update is actively installing or uninstalling, or an MSI transaction is running.
 - Keeps deferred requests pending and checks them again, while new physical input cancels the request.
 - Applies a locked-session timeout only when every logged-on session is locked or disconnected; an unlocked session always blocks machine shutdown.
 - Runs a separate agent in every local and Remote Desktop user session. Activity or the Continue button in any session cancels shutdown and closes warning dialogs in all sessions.
-- Coordinates concurrent warning dialogs and waits for the latest countdown to finish before shutdown.
+- Broadcasts one shared warning deadline to every unlocked agent, displays the remaining countdown in each local/RDP session and waits for the latest countdown before shutdown.
 - Rejects an expired warning from one idle session while another unlocked user session is still active.
 - Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
 - Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
@@ -44,20 +44,16 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 
 - `IdleMinutes`: `90`
 - `WarningSeconds`: `300`
-- `LockedMinutes`: `90`
-- `NoUserMinutes`: `90`
 - `CheckIntervalSeconds`: `5`
 - `PauseWhenFullscreen`: `true`
 - `DryRun`: `false`
 
-With these defaults, an unlocked computer shuts down after approximately 90 minutes of inactivity plus a 5-minute warning. A locked computer shuts down after 90 minutes without lock-screen activity, and a computer without a logged-on user shuts down after 90 minutes.
+With these defaults, every machine state becomes eligible after 90 minutes of inactivity and shuts down after the additional 5-minute warning period. The warning is visible only in unlocked sessions and remains silent on locked/sign-in screens.
 
 ## Chocolatey package parameters
 
-- `/IdleMinutes:<minutes>` — inactivity duration before the warning dialog is displayed.
-- `/WarningSeconds:<seconds>` — warning countdown before the shutdown request is sent.
-- `/LockedMinutes:<minutes>` — lock-screen inactivity duration before shutdown.
-- `/NoUserMinutes:<minutes>` — duration before shutdown when no interactive user is logged on.
+- `/IdleMinutes:<minutes>` — inactivity duration for unlocked, locked and no-user states before the protection period starts.
+- `/WarningSeconds:<seconds>` — additional protection period before shutdown; displayed as a popup only in unlocked sessions.
 - `/CheckIntervalSeconds:<seconds>` — interval used by the service and agent to evaluate the current state.
 - `/PauseWhenFullscreen:true|false` — enables or disables presentation and fullscreen protection.
 - `/DryRun:true|false` — logs shutdown decisions without powering off the computer when enabled.
@@ -74,13 +70,13 @@ choco install idle-shutdown -y
 Short safe test:
 
 ```powershell
-choco install idle-shutdown -y --params="'/IdleMinutes:1 /WarningSeconds:30 /LockedMinutes:1 /NoUserMinutes:1 /CheckIntervalSeconds:5 /PauseWhenFullscreen:false /DryRun:true'"
+choco install idle-shutdown -y --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:false /DryRun:true'"
 ```
 
 Upgrade while changing selected values:
 
 ```powershell
-choco upgrade idle-shutdown -y --params="'/LockedMinutes:30 /NoUserMinutes:30'"
+choco upgrade idle-shutdown -y --params="'/IdleMinutes:30 /WarningSeconds:60'"
 ```
 
 Health check:

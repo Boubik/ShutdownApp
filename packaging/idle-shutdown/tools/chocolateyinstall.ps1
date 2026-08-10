@@ -74,8 +74,6 @@ $config = [ordered]@{}
 foreach ($name in @(
     'IdleMinutes',
     'WarningSeconds',
-    'LockedMinutes',
-    'NoUserMinutes',
     'CheckIntervalSeconds',
     'PauseWhenFullscreen',
     'DryRun'
@@ -106,11 +104,17 @@ if ((Test-Path $configPath) -and -not $resetConfig) {
 
 $config.IdleMinutes = Get-PositiveIntegerParameter 'IdleMinutes' $config.IdleMinutes
 $config.WarningSeconds = Get-PositiveIntegerParameter 'WarningSeconds' $config.WarningSeconds
-$config.LockedMinutes = Get-PositiveIntegerParameter 'LockedMinutes' $config.LockedMinutes
-$config.NoUserMinutes = Get-PositiveIntegerParameter 'NoUserMinutes' $config.NoUserMinutes
 $config.CheckIntervalSeconds = Get-PositiveIntegerParameter 'CheckIntervalSeconds' $config.CheckIntervalSeconds
 $config.PauseWhenFullscreen = Get-BooleanParameter 'PauseWhenFullscreen' $config.PauseWhenFullscreen
 $config.DryRun = Get-BooleanParameter 'DryRun' $config.DryRun
+
+foreach ($removedParameter in @('LockedMinutes', 'NoUserMinutes')) {
+    if ($parameters.ContainsKey($removedParameter)) {
+        Write-Warning (
+            "/$removedParameter was removed in version 1.3.0 and is ignored. " +
+            '/IdleMinutes now controls unlocked, locked and no-user inactivity.')
+    }
+}
 
 Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -148,7 +152,7 @@ else {
     sc.exe config $serviceName binPath= "`"$installedServiceExe`"" start= auto DisplayName= "Idle Shutdown" | Out-Null
 }
 
-sc.exe description $serviceName "Automatically shuts down the computer after inactivity, a prolonged lock, or no-user state." | Out-Null
+sc.exe description $serviceName "Automatically shuts down the computer after a configurable period of machine inactivity." | Out-Null
 sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
 
 $installedAgentExe = Join-Path $installDir 'IdleShutdown.Agent.exe'

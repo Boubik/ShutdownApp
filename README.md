@@ -7,12 +7,13 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 
 ## Chování
 
-- Odemčená relace: po `IdleMinutes` nečinnosti se zobrazí odpočet `WarningSeconds`. Libovolný nový vstup nebo tlačítko v dialogu vypnutí zruší.
-- Zamčená relace: služba vypne počítač po `LockedMinutes` bez popupu. Vstup na zamykací obrazovce timer resetuje a těsně před vypnutím se kontroluje ještě jednou.
-- Žádný přihlášený uživatel: služba vypne počítač po `NoUserMinutes` bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce spustí celý timeout znovu.
-- Vypnutí ze zamčeného nebo nepřihlášeného stavu má navíc interní 60sekundovou ochrannou lhůtu. Nový vstup, přihlášení nebo odemknutí během ní vypnutí zruší. Teprve potom služba odešle nevnucené (`/t 0`, bez `/f`) vypnutí, takže Windows může upozornit na aplikaci s neuloženými daty.
+- `IdleMinutes` je jediný timeout nečinnosti pro odemčený, zamčený i nepřihlášený stav. Po něm vždy následuje dodatečná ochranná doba `WarningSeconds`.
+- Odemčená relace: během `WarningSeconds` se ve všech odemčených lokálních/RDP relacích zobrazí společný popup. Libovolný nový vstup nebo tlačítko v dialogu vypnutí zruší.
+- Zamčená relace: stejná doba `WarningSeconds` proběhne bez popupu. Vstup na zamykací obrazovce zruší čekání a spustí celý `IdleMinutes` timeout znovu.
+- Žádný přihlášený uživatel: `WarningSeconds` proběhne bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce zruší čekání a spustí celý timeout znovu.
+- Po vypršení obou dob služba odešle nevnucené (`/t 0`, bez `/f`) vypnutí, takže Windows může upozornit na aplikaci s neuloženými daty.
 - Pokud je přihlášeno více uživatelů, zamčený timeout se použije pouze tehdy, když jsou zamčené nebo odpojené všechny jejich relace. Jedna aktivní odemčená relace vypnutí zablokuje.
-- Agent běží samostatně v každé lokální i RDP relaci. Popup se proto může zobrazit všem neaktivním uživatelům, ale nový vstup nebo tlačítko „pokračovat“ v jedné relaci zruší vypnutí a zavře popup ve všech ostatních relacích. Pokud odpočty nezačnou přesně současně, služba čeká na ten, který skončí nejpozději. Požadavek jedné neaktivní relace služba odmítne, pokud je jiná odemčená relace stále aktivní.
+- Agent běží samostatně v každé lokální i RDP relaci. Jakmile první relace dosáhne timeoutu, služba vyhlásí jeden společný deadline a popup se zbývajícím časem převezmou všechny odemčené relace. Nový vstup nebo tlačítko „pokračovat“ v jedné relaci zruší vypnutí a zavře popup ve všech ostatních relacích. Pokud odpočty nezačnou přesně současně, služba čeká na ten, který skončí nejpozději. Požadavek jedné neaktivní relace služba odmítne, pokud je jiná odemčená relace stále aktivní.
 - `PauseWhenFullscreen`: před varováním se kontrolují systémové power/execution requests a poté skutečný fullscreen foreground okna.
 - Bezprostředně před každým vypnutím služba kontroluje systémové power requests, aktivní instalaci Windows Update a aktivní MSI transakci. Dokud aktivita trvá, požadavek odloží a kontrolu opakuje; nový fyzický vstup mezitím požadavek zruší. Samotný stav „čeká se na restart“ vypnutí neblokuje, aby Windows mohl aktualizaci dokončit.
 - `DryRun`: při hodnotě `true` služba vypnutí pouze zapíše do logu.
@@ -26,10 +27,8 @@ Výchozí produkční konfigurace:
 
 ```json
 {
-  "IdleMinutes": 60,
+  "IdleMinutes": 90,
   "WarningSeconds": 300,
-  "LockedMinutes": 60,
-  "NoUserMinutes": 60,
   "CheckIntervalSeconds": 5,
   "PauseWhenFullscreen": true,
   "DryRun": false
@@ -134,7 +133,7 @@ Příklad testovacích parametrů:
 ```powershell
 choco install idle-shutdown -y `
   --source <INTERNAL_CHOCOLATEY_SOURCE> `
-  --params="'/IdleMinutes:1 /WarningSeconds:30 /LockedMinutes:1 /NoUserMinutes:1 /CheckIntervalSeconds:5 /PauseWhenFullscreen:false /DryRun:true'"
+  --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:false /DryRun:true'"
 ```
 
 Existující konfigurace se při upgradu zachová. Parametr `/ResetConfig` ji nejprve nahradí výchozí konfigurací. Kontrola instalace:
@@ -147,14 +146,14 @@ Pro ověření stavů doporučujeme nejprve použít `DryRun:true` a krátké ti
 
 - po startu bez přihlášení musí timeout vyhodnotit stav `no logged-on user`;
 - po přihlášení a zamčení musí pohyb myši nebo stisk klávesy resetovat lock timer;
-- po odhlášení se lock timer zruší a začne nový `NoUserMinutes` timer.
+- po odhlášení se lock timer zruší a začne nový společný `IdleMinutes` timer.
 
 Agent při zamčení kontroluje session-specific input každých 250 ms a posílá
 službě pouze tiché resety timeru. Služba navíc spouští skrytý monitor přímo ve
 fyzické konzolové relaci; ten pokrývá i přihlašovací obrazovku po restartu nebo
 odhlášení, kde WTS na některých Windows neposkytuje `LastInputTime`. Před
 vypnutím se znovu ověří vstup i přihlášení uživatele a následuje zrušitelná
-60sekundová ochranná lhůta. Jednotlivé pohyby a stisky se do logu nezapisují;
+ochranná doba `WarningSeconds`. Jednotlivé pohyby a stisky se do logu nezapisují;
 v režimu `DryRun` je v diagnostice pouze souhrnný čítač `helperResets`.
 
 Po vypršení popupu se při `DryRun` další popup neukáže, dokud aplikace

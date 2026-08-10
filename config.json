@@ -1,8 +1,6 @@
 {
   "IdleMinutes": 90,
   "WarningSeconds": 300,
-  "LockedMinutes": 90,
-  "NoUserMinutes": 90,
   "CheckIntervalSeconds": 5,
   "PauseWhenFullscreen": true,
   "DryRun": false

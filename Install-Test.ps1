@@ -21,8 +21,25 @@ Start-Sleep -Seconds 2
 
 Copy-Item (Join-Path $Dist 'Service\*') $InstallDir -Recurse -Force
 Copy-Item (Join-Path $Dist 'Agent\*') $InstallDir -Recurse -Force
-if (-not (Test-Path (Join-Path $DataDir 'config.json'))) {
-    Copy-Item (Join-Path $Root 'config.json') (Join-Path $DataDir 'config.json') -Force
+$defaultConfigPath = Join-Path $Root 'config.json'
+$configPath = Join-Path $DataDir 'config.json'
+if (Test-Path $configPath) {
+    $existingConfig = Get-Content $configPath -Raw | ConvertFrom-Json
+    $defaultConfig = Get-Content $defaultConfigPath -Raw | ConvertFrom-Json
+    $normalizedConfig = [ordered]@{}
+
+    foreach ($propertyName in @('IdleMinutes', 'WarningSeconds', 'CheckIntervalSeconds', 'PauseWhenFullscreen', 'DryRun')) {
+        $existingProperty = $existingConfig.PSObject.Properties[$propertyName]
+        $normalizedConfig[$propertyName] = if ($null -ne $existingProperty) {
+            $existingProperty.Value
+        } else {
+            $defaultConfig.$propertyName
+        }
+    }
+
+    $normalizedConfig | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+} else {
+    Copy-Item $defaultConfigPath $configPath -Force
 }
 
 $logPath = Join-Path $DataDir 'IdleShutdown.log'
@@ -42,7 +59,7 @@ Set-Acl -Path $logPath -AclObject $logAcl
 
 $serviceExe = Join-Path $InstallDir 'IdleShutdown.Service.exe'
 sc.exe create $ServiceName binPath= "`"$serviceExe`"" start= auto DisplayName= "Idle Shutdown" | Out-Null
-sc.exe description $ServiceName "Automatically shuts down the computer after inactivity, a prolonged lock, or no-user state." | Out-Null
+sc.exe description $ServiceName "Automatically shuts down the computer after a configurable period of machine inactivity." | Out-Null
 sc.exe failure $ServiceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
 Start-Service $ServiceName
 

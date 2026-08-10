@@ -9,7 +9,6 @@ namespace IdleShutdown.ServiceApp;
 internal sealed class IdleShutdownService : ServiceBase
 {
     private const string PipeName = "IdleShutdown";
-    private const int MachineStateShutdownGraceSeconds = 60;
     private const int AgentSessionStateFreshSeconds = 30;
     private const int InteractiveCoordinationSafetySeconds = 3;
 
@@ -204,6 +203,7 @@ internal sealed class IdleShutdownService : ServiceBase
         if (cancelPendingShutdown)
         {
             MachineActivitySignal.Pulse();
+            MachineWarningSignal.Clear();
 
             CancelPendingShutdown(
                 $"session {changeDescription.SessionId} " +
@@ -368,7 +368,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
                 if (
                     DateTime.UtcNow - _lockedSince[session.SessionId] >=
-                    TimeSpan.FromMinutes(config.LockedMinutes))
+                    TimeSpan.FromMinutes(config.IdleMinutes))
                 {
                     // Final race-condition protection: re-read input just
                     // before choosing this session for shutdown.
@@ -572,7 +572,7 @@ internal sealed class IdleShutdownService : ServiceBase
     {
         var now = DateTime.UtcNow;
         var timeout = TimeSpan.FromMinutes(
-            config.NoUserMinutes);
+            config.IdleMinutes);
         NoUserObservation observation;
 
         lock (_sync)
@@ -603,7 +603,8 @@ internal sealed class IdleShutdownService : ServiceBase
                 Log.Write(
                     $"No logged-on user detected; monitoring " +
                     $"sign-in-screen input and shutting down after " +
-                    $"{config.NoUserMinutes} minute(s).");
+                    $"{config.IdleMinutes} minute(s) of inactivity plus " +
+                    $"a {config.WarningSeconds}-second silent warning period.");
             }
 
             WriteNoUserDiagnosticIfDue(
@@ -957,6 +958,9 @@ internal sealed class IdleShutdownService : ServiceBase
                     ExecuteAtUtc = deadlineUtc
                 };
             }
+
+            MachineWarningSignal.SetDeadline(
+                _warningDeadlines.Values.Max());
         }
 
         return true;
@@ -1086,6 +1090,7 @@ internal sealed class IdleShutdownService : ServiceBase
         lock (_sync)
         {
             _warningDeadlines.Clear();
+            MachineWarningSignal.Clear();
 
             if (isLocked.HasValue)
             {
@@ -1151,8 +1156,8 @@ internal sealed class IdleShutdownService : ServiceBase
             }
 
             Log.Write(
-                $"DRY RUN: {MachineStateShutdownGraceSeconds}-second " +
-                $"shutdown grace period skipped ({reason}).");
+                $"DRY RUN: {config.WarningSeconds}-second silent " +
+                $"warning period skipped ({reason}).");
 
             return;
         }
@@ -1169,13 +1174,12 @@ internal sealed class IdleShutdownService : ServiceBase
                 sessionId,
                 reason,
                 DateTime.UtcNow.AddSeconds(
-                    MachineStateShutdownGraceSeconds));
+                    config.WarningSeconds));
 
             Log.Write(
-                $"Shutdown grace period started for " +
-                $"{MachineStateShutdownGraceSeconds} second(s) " +
-                $"({reason}); physical input, sign-in or unlock " +
-                $"will cancel it.");
+                $"Silent shutdown warning period started for " +
+                $"{config.WarningSeconds} second(s) ({reason}); " +
+                $"physical input, sign-in or unlock will cancel it.");
         }
 
         // Close the small race between the final pre-shutdown state read and
@@ -1447,9 +1451,17 @@ internal sealed class IdleShutdownService : ServiceBase
                 _warningDeadlines.Remove(expiredSessionId);
             }
 
-            return WarningCoordinationPolicy.GetLatestActiveDeadline(
+            var latestDeadline =
+                WarningCoordinationPolicy.GetLatestActiveDeadline(
                 _warningDeadlines.Values,
                 now);
+
+            if (!latestDeadline.HasValue)
+            {
+                MachineWarningSignal.Clear();
+            }
+
+            return latestDeadline;
         }
     }
 

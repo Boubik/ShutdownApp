@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0
+
+- Broadcasts the first warning deadline through the Windows service to every unlocked local and Remote Desktop agent.
+- Makes agents that have not independently reached their idle boundary join the shared warning with its remaining time.
+- Cancels a shared warning if any participating session reports presentation/fullscreen protection.
+- Replaces separate unlocked, locked and no-user timeout settings with one machine-wide `IdleMinutes` value.
+- Applies `WarningSeconds` as an additional protection period in every state, with a visible popup only while unlocked.
+- Removes `LockedMinutes` and `NoUserMinutes` from the configuration and Chocolatey parameters.
+
 ## 1.2.2
 
 - Coordinates warning deadlines across local and Remote Desktop sessions.

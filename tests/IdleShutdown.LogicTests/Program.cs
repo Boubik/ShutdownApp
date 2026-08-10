@@ -221,6 +221,42 @@ var tests = new (string Name, Action Run)[]
             WarningCoordinationPolicy.GetLatestActiveDeadline(
                 [Utc(90), Utc(100)],
                 now));
+    }),
+
+    ("a shared warning is shown before the local idle boundary", () =>
+    {
+        var now = Utc(100);
+
+        Expect(
+            true,
+            WarningDisplayPolicy.ShouldShow(
+                TimeSpan.FromSeconds(5),
+                60,
+                Utc(130),
+                now));
+    }),
+
+    ("an expired shared warning cannot bypass the idle boundary", () =>
+    {
+        var now = Utc(100);
+
+        Expect(
+            false,
+            WarningDisplayPolicy.ShouldShow(
+                TimeSpan.FromSeconds(5),
+                60,
+                Utc(100),
+                now));
+    }),
+
+    ("a shared warning uses its remaining countdown", () =>
+    {
+        Expect(
+            6,
+            WarningDisplayPolicy.GetVisibleSeconds(
+                30,
+                Utc(106),
+                Utc(100)));
     })
 };
 

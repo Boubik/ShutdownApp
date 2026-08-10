@@ -8,8 +8,6 @@ internal sealed class AppConfig
     [
         nameof(IdleMinutes),
         nameof(WarningSeconds),
-        nameof(LockedMinutes),
-        nameof(NoUserMinutes),
         nameof(CheckIntervalSeconds),
         nameof(PauseWhenFullscreen),
         nameof(DryRun)
@@ -17,8 +15,6 @@ internal sealed class AppConfig
 
     public int IdleMinutes { get; set; } = 90;
     public int WarningSeconds { get; set; } = 300;
-    public int LockedMinutes { get; set; } = 90;
-    public int NoUserMinutes { get; set; } = 90;
     public int CheckIntervalSeconds { get; set; } = 5;
     public bool PauseWhenFullscreen { get; set; } = true;
     public bool DryRun { get; set; } = false;
@@ -71,8 +67,6 @@ internal sealed class AppConfig
                 config is null ||
                 config.IdleMinutes < 1 ||
                 config.WarningSeconds < 1 ||
-                config.LockedMinutes < 1 ||
-                config.NoUserMinutes < 1 ||
                 config.CheckIntervalSeconds < 1)
             {
                 return Invalid();

@@ -65,7 +65,7 @@ if ($null -ne $interactiveShell) {
 if (Test-Path $configPath) {
     try {
         $config = Get-Content $configPath -Raw | ConvertFrom-Json
-        foreach ($name in @('IdleMinutes', 'WarningSeconds', 'LockedMinutes', 'NoUserMinutes', 'CheckIntervalSeconds')) {
+        foreach ($name in @('IdleMinutes', 'WarningSeconds', 'CheckIntervalSeconds')) {
             $value = $config.PSObject.Properties[$name].Value
             if ($null -eq $value -or [int] $value -lt 1) {
                 $errors.Add("Configuration value $name must be a positive integer.")
