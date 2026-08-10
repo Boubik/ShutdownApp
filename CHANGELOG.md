@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.1
+
+- Makes Windows service/WTS lock and disconnect observations authoritative over an unreliable agent `UNLOCKED` heartbeat.
+- Prevents an RDP or driver `SYSTEM`-only execution request such as `Legacy Kernel Caller` from blocking idle shutdown indefinitely.
+- Keeps presentation protection for `DISPLAY` execution requests and true-fullscreen foreground windows.
+- Makes `PauseWhenFullscreen: false` disable presentation power-request protection in both the agent and the service while retaining Windows Update and MSI protection.
+
 ## 1.3.0
 
 - Broadcasts the first warning deadline through the Windows service to every unlocked local and Remote Desktop agent.

@@ -1,5 +1,6 @@
 using IdleShutdown.ServiceApp;
 using IdleShutdown.AgentApp;
+using IdleShutdown.Shared;
 
 var tests = new (string Name, Action Run)[]
 {
@@ -169,6 +170,56 @@ var tests = new (string Name, Action Run)[]
         Expect(
             false,
             MachineSessionPolicy.CanApplyLockedTimeout([true, false, true]));
+    }),
+
+    ("an agent heartbeat cannot undo a WTS lock", () =>
+    {
+        Expect(
+            true,
+            MachineSessionPolicy.GetEffectiveLockedState(
+                wtsIsLocked: true,
+                serviceObservedLock: false,
+                agentIsLocked: false));
+        Expect(
+            true,
+            MachineSessionPolicy.GetEffectiveLockedState(
+                wtsIsLocked: false,
+                serviceObservedLock: false,
+                agentIsLocked: true));
+        Expect(
+            true,
+            MachineSessionPolicy.GetEffectiveLockedState(
+                wtsIsLocked: false,
+                serviceObservedLock: true,
+                agentIsLocked: false));
+        Expect(
+            false,
+            MachineSessionPolicy.GetEffectiveLockedState(
+                wtsIsLocked: false,
+                serviceObservedLock: false,
+                agentIsLocked: false));
+    }),
+
+    ("presentation protection ignores SYSTEM-only execution requests", () =>
+    {
+        const uint esSystemRequired = 0x00000001;
+        const uint esDisplayRequired = 0x00000002;
+
+        Expect(
+            false,
+            PowerRequestPolicy.ShouldPauseForPresentation(
+                esSystemRequired,
+                presentationProtectionEnabled: true));
+        Expect(
+            true,
+            PowerRequestPolicy.ShouldPauseForPresentation(
+                esDisplayRequired,
+                presentationProtectionEnabled: true));
+        Expect(
+            false,
+            PowerRequestPolicy.ShouldPauseForPresentation(
+                esDisplayRequired,
+                presentationProtectionEnabled: false));
     }),
 
     ("a fresh active unlocked session blocks an idle shutdown", () =>

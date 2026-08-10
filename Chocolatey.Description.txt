@@ -12,13 +12,13 @@ Idle Shutdown automatically powers off inactive Windows computers. It is designe
 - Runs a hidden input monitor in the physical console session, covering sign-in screens where Windows WTS does not expose LastInputTime.
 - Uses `WarningSeconds` as a cancellable final silent warning period for locked/no-user shutdowns; physical input, sign-in or unlock cancels it.
 - Uses a non-forced final Windows shutdown request so applications with unsaved work can still block shutdown instead of being terminated automatically.
-- Defers every shutdown while Windows reports a system/display power request, Windows Update is actively installing or uninstalling, or an MSI transaction is running.
+- Defers shutdown for Windows display power requests, active Windows Update installation/uninstallation and MSI transactions; SYSTEM-only requests such as an RDP `Legacy Kernel Caller` do not block idle shutdown indefinitely.
 - Keeps deferred requests pending and checks them again, while new physical input cancels the request.
 - Applies a locked-session timeout only when every logged-on session is locked or disconnected; an unlocked session always blocks machine shutdown.
 - Runs a separate agent in every local and Remote Desktop user session. Activity or the Continue button in any session cancels shutdown and closes warning dialogs in all sessions.
 - Broadcasts one shared warning deadline to every unlocked agent, displays the remaining countdown in each local/RDP session and waits for the latest countdown before shutdown.
 - Rejects an expired warning from one idle session while another unlocked user session is still active.
-- Protects presentations and media playback by checking Windows system/display power requests, with true-fullscreen foreground-window detection as a fallback.
+- Protects presentations and media playback by checking Windows display power requests, with true-fullscreen foreground-window detection as a fallback.
 - Uses a Windows service running as LocalSystem for machine-level monitoring and shutdown, including states where no user is logged on.
 - Uses a lightweight per-user agent for interactive idle detection, presentation protection and the warning dialog.
 - Automatically localizes the warning dialog for Czech, English, German and Spanish Windows environments, with English as the fallback.
@@ -55,7 +55,7 @@ With these defaults, every machine state becomes eligible after 90 minutes of in
 - `/IdleMinutes:<minutes>` — inactivity duration for unlocked, locked and no-user states before the protection period starts.
 - `/WarningSeconds:<seconds>` — additional protection period before shutdown; displayed as a popup only in unlocked sessions.
 - `/CheckIntervalSeconds:<seconds>` — interval used by the service and agent to evaluate the current state.
-- `/PauseWhenFullscreen:true|false` — enables or disables presentation and fullscreen protection.
+- `/PauseWhenFullscreen:true|false` — enables or disables display-request and fullscreen presentation protection; Windows Update and MSI protection remains active.
 - `/DryRun:true|false` — logs shutdown decisions without powering off the computer when enabled.
 - `/ResetConfig` — replaces the existing configuration with package defaults before applying other parameters.
 

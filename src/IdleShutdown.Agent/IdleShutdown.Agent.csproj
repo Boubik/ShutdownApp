@@ -11,4 +11,10 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationIcon>Assets\idle-shutdown.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile
+      Include="..\IdleShutdown.Shared\PowerRequestPolicy.cs"
+      Link="PowerRequestPolicy.cs" />
+  </ItemGroup>
 </Project>

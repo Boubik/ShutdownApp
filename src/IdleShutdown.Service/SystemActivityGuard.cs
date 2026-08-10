@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using IdleShutdown.Shared;
 
 namespace IdleShutdown.ServiceApp;
 
@@ -10,16 +11,18 @@ internal sealed record SystemActivityStatus(
 
 internal static class SystemActivityGuard
 {
-    private const uint EsSystemRequired = 0x00000001;
-    private const uint EsDisplayRequired = 0x00000002;
-
-    public static SystemActivityStatus GetStatus()
+    public static SystemActivityStatus GetStatus(
+        bool presentationProtectionEnabled)
     {
-        if (HasActiveWindowsPowerRequest(out var powerError))
+        string? powerError = null;
+
+        if (
+            presentationProtectionEnabled &&
+            HasActiveWindowsDisplayRequest(out powerError))
         {
             return new SystemActivityStatus(
                 true,
-                "an active Windows system/display power request");
+                "an active Windows display power request");
         }
 
         if (IsWindowsUpdateBusy(out var updateError))
@@ -54,7 +57,7 @@ internal static class SystemActivityGuard
                 : combinedError);
     }
 
-    private static bool HasActiveWindowsPowerRequest(
+    private static bool HasActiveWindowsDisplayRequest(
         out string? error)
     {
         try
@@ -76,10 +79,9 @@ internal static class SystemActivityGuard
 
             error = null;
 
-            return (
-                executionState &
-                (EsSystemRequired | EsDisplayRequired)
-            ) != 0;
+            return PowerRequestPolicy.ShouldPauseForPresentation(
+                executionState,
+                presentationProtectionEnabled: true);
         }
         catch (Exception ex)
         {

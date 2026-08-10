@@ -20,6 +20,7 @@ internal sealed class IdleShutdownService : ServiceBase
     private readonly Dictionary<int, int> _lockedPipeResetCount = new();
     private readonly Dictionary<int, AgentSessionState> _agentSessionStates =
         new();
+    private readonly HashSet<int> _serviceObservedLockedSessions = new();
     private readonly Dictionary<int, DateTime> _warningDeadlines = new();
     private readonly NoUserActivityTracker _noUserTracker = new();
     private readonly ConsoleInputMonitorLauncher _inputMonitor = new();
@@ -121,6 +122,8 @@ internal sealed class IdleShutdownService : ServiceBase
                 case SessionChangeReason.RemoteDisconnect:
                     cancelPendingShutdown = true;
                     _warningDeadlines.Clear();
+                    _serviceObservedLockedSessions.Add(
+                        changeDescription.SessionId);
 
                     _agentSessionStates[changeDescription.SessionId] =
                         new AgentSessionState(
@@ -146,6 +149,8 @@ internal sealed class IdleShutdownService : ServiceBase
                 case SessionChangeReason.SessionLogon:
                     cancelPendingShutdown = true;
                     _warningDeadlines.Clear();
+                    _serviceObservedLockedSessions.Remove(
+                        changeDescription.SessionId);
 
                     _agentSessionStates[changeDescription.SessionId] =
                         new AgentSessionState(
@@ -177,6 +182,8 @@ internal sealed class IdleShutdownService : ServiceBase
                 case SessionChangeReason.SessionLogoff:
                     cancelPendingShutdown = true;
                     _warningDeadlines.Clear();
+                    _serviceObservedLockedSessions.Remove(
+                        changeDescription.SessionId);
 
                     _agentSessionStates.Remove(
                         changeDescription.SessionId);
@@ -482,11 +489,24 @@ internal sealed class IdleShutdownService : ServiceBase
                     {
                         return session with
                         {
-                            IsLocked = reportedState.IsLocked
+                            IsLocked =
+                                MachineSessionPolicy.GetEffectiveLockedState(
+                                    session.IsLocked,
+                                    _serviceObservedLockedSessions.Contains(
+                                        session.SessionId),
+                                    reportedState.IsLocked)
                         };
                     }
 
-                    return session;
+                    return session with
+                    {
+                        IsLocked =
+                            MachineSessionPolicy.GetEffectiveLockedState(
+                                session.IsLocked,
+                                _serviceObservedLockedSessions.Contains(
+                                    session.SessionId),
+                                agentIsLocked: null)
+                    };
                 })
                 .ToArray();
         }
@@ -516,7 +536,10 @@ internal sealed class IdleShutdownService : ServiceBase
                 sessions.Add(
                     new SessionSnapshot(
                         pair.Key,
-                        pair.Value.IsLocked,
+                        MachineSessionPolicy.GetEffectiveLockedState(
+                            wtsIsLocked: false,
+                            _serviceObservedLockedSessions.Contains(pair.Key),
+                            pair.Value.IsLocked),
                         pair.Value.LastInputUtc));
             }
         }
@@ -1029,34 +1052,12 @@ internal sealed class IdleShutdownService : ServiceBase
         var boundedIdleSeconds = Math.Min(
             idleSeconds,
             TimeSpan.FromDays(365).TotalSeconds);
-        var cancelLockedShutdown = false;
-
         lock (_sync)
         {
             _agentSessionStates[sessionId] = new AgentSessionState(
                 isLocked,
                 now,
                 now - TimeSpan.FromSeconds(boundedIdleSeconds));
-
-            if (!isLocked)
-            {
-                _lockedSince.Remove(sessionId);
-                _lockedSessionLastInput.Remove(sessionId);
-                _lockedDiagnosticLoggedAt.Remove(sessionId);
-                _lockedPipeResetCount.Remove(sessionId);
-
-                cancelLockedShutdown =
-                    _pendingShutdown is
-                    {
-                        Kind: PendingShutdownKind.LockedSession
-                    };
-            }
-        }
-
-        if (cancelLockedShutdown)
-        {
-            CancelPendingShutdown(
-                $"agent in session {sessionId} reported an unlocked desktop");
         }
     }
 
@@ -1150,7 +1151,7 @@ internal sealed class IdleShutdownService : ServiceBase
     {
         if (config.DryRun)
         {
-            if (ShouldDeferForSystemActivity(reason))
+            if (ShouldDeferForSystemActivity(reason, config))
             {
                 return;
             }
@@ -1202,6 +1203,8 @@ internal sealed class IdleShutdownService : ServiceBase
         MachineSessionState machineState)
     {
         PendingShutdown? pending;
+        var effectiveSessions = GetEffectiveSessionStates(
+            machineState.LoggedOnSessions);
 
         lock (_sync)
         {
@@ -1216,14 +1219,14 @@ internal sealed class IdleShutdownService : ServiceBase
         var shouldCancel = pending.Kind switch
         {
             PendingShutdownKind.NoUser =>
-                machineState.LoggedOnSessions.Count > 0,
+                effectiveSessions.Count > 0,
 
             PendingShutdownKind.LockedSession =>
-                !machineState.LoggedOnSessions.Any(
+                !effectiveSessions.Any(
                     session =>
                         session.SessionId == pending.SessionId &&
                         session.IsLocked) ||
-                machineState.LoggedOnSessions.Any(
+                effectiveSessions.Any(
                     session => !session.IsLocked),
 
             _ => false
@@ -1315,7 +1318,7 @@ internal sealed class IdleShutdownService : ServiceBase
             return true;
         }
 
-        if (ShouldDeferForSystemActivity(pending.Reason))
+        if (ShouldDeferForSystemActivity(pending.Reason, config))
         {
             lock (_sync)
             {
@@ -1480,21 +1483,32 @@ internal sealed class IdleShutdownService : ServiceBase
         }
     }
 
-    private bool ShouldDeferForSystemActivity(string shutdownReason)
+    private bool ShouldDeferForSystemActivity(
+        string shutdownReason,
+        AppConfig config)
     {
         var now = DateTime.UtcNow;
 
         lock (_activitySync)
         {
+            var cachedDisplayRequestWasDisabled =
+                !config.PauseWhenFullscreen &&
+                string.Equals(
+                    _lastSystemBusyReason,
+                    "an active Windows display power request",
+                    StringComparison.Ordinal);
+
             if (
                 _systemBusyRecheckUtc.HasValue &&
-                now < _systemBusyRecheckUtc.Value)
+                now < _systemBusyRecheckUtc.Value &&
+                !cachedDisplayRequestWasDisabled)
             {
                 return true;
             }
         }
 
-        var status = SystemActivityGuard.GetStatus();
+        var status = SystemActivityGuard.GetStatus(
+            config.PauseWhenFullscreen);
 
         lock (_activitySync)
         {

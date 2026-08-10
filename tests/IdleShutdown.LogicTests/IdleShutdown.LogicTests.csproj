@@ -28,5 +28,8 @@
     <Compile
       Include="..\..\src\IdleShutdown.Service\WarningCoordinationPolicy.cs"
       Link="WarningCoordinationPolicy.cs" />
+    <Compile
+      Include="..\..\src\IdleShutdown.Shared\PowerRequestPolicy.cs"
+      Link="PowerRequestPolicy.cs" />
   </ItemGroup>
 </Project>

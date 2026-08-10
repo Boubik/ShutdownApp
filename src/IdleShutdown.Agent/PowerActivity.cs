@@ -1,13 +1,11 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using IdleShutdown.Shared;
 
 namespace IdleShutdown.AgentApp;
 
 internal static class PowerActivity
 {
-    private const uint EsSystemRequired = 0x00000001;
-    private const uint EsDisplayRequired = 0x00000002;
-
     private const uint MonitorDefaultToNearest = 0x00000002;
     private const int GwlStyle = -16;
     private const long WsChild = 0x40000000L;
@@ -27,9 +25,9 @@ internal static class PowerActivity
 
     public static bool ShouldPauseForPresentation()
     {
-        // Preferred signal: an application or driver explicitly tells
-        // Windows that the display/system must remain active.
-        if (HasActiveWindowsPowerRequest())
+        // Preferred signal: an application explicitly tells Windows that the
+        // display must remain active for presentation or media playback.
+        if (HasActiveWindowsDisplayRequest())
         {
             return true;
         }
@@ -39,7 +37,7 @@ internal static class PowerActivity
         return IsForegroundWindowTrulyFullscreen();
     }
 
-    private static bool HasActiveWindowsPowerRequest()
+    private static bool HasActiveWindowsDisplayRequest()
     {
         uint executionState = 0;
 
@@ -55,10 +53,9 @@ internal static class PowerActivity
             return false;
         }
 
-        return (
-            executionState &
-            (EsSystemRequired | EsDisplayRequired)
-        ) != 0;
+        return PowerRequestPolicy.ShouldPauseForPresentation(
+            executionState,
+            presentationProtectionEnabled: true);
     }
 
     private static bool IsForegroundWindowTrulyFullscreen()

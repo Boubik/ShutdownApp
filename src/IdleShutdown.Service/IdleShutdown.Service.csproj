@@ -13,5 +13,8 @@
   <ItemGroup>
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.0" />
     <PackageReference Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
+    <Compile
+      Include="..\IdleShutdown.Shared\PowerRequestPolicy.cs"
+      Link="PowerRequestPolicy.cs" />
   </ItemGroup>
 </Project>

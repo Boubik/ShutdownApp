@@ -13,7 +13,7 @@
     <PackageTags>idle shutdown windows service workstation classroom</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
-    <PackageReleaseNotes>Version $(Version) simplifies configuration to one IdleMinutes timeout and one additional WarningSeconds period for every machine state. The warning is broadcast to all unlocked local/RDP sessions and remains silent when locked or no user is logged on. LockedMinutes and NoUserMinutes are removed.</PackageReleaseNotes>
+    <PackageReleaseNotes>Version $(Version) makes service/WTS lock observations authoritative, prevents RDP or driver SYSTEM-only execution requests from blocking shutdown indefinitely, and keeps DISPLAY/fullscreen, Windows Update and MSI protection.</PackageReleaseNotes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\dist\package\</PackageOutputPath>
     <NoWarn>$(NoWarn);NU5111</NoWarn>
   </PropertyGroup>
