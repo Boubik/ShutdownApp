@@ -458,9 +458,119 @@ if ($config.SelfUpdateEnabled) {
     }
     Set-Acl -LiteralPath $updaterDir -AclObject $secureAcl -ErrorAction Stop
 
+    # Every stable release gets its own immutable helper file. Never reuse
+    # a 2.0.0 helper script after upgrading the application to 2.0.2.
     $helperVersion = [string]$env:ChocolateyPackageVersion
-    if ($helperVersion -notmatch '^2\.0\.0-(?:beta\.\d+|rc\.\d+)$') {
-        $helperVersion = '2.0.0'
+    if ($helperVersion -notmatch '^[0-9]+[.][0-9]+[.][0-9]+
+    $helperTarget = Join-Path $updaterDir ("SelfUpdate-$helperVersion.ps1")
+    if (-not (Test-Path -LiteralPath $helperTarget)) {
+        Copy-Item -LiteralPath $helperSource -Destination $helperTarget -ErrorAction Stop
+    }
+
+    # The running beta.8 helper must stay untouched; create a new immutable
+    # stable helper, then update the scheduled task's FUTURE action only.
+    # Set-ScheduledTask changes do not affect an already-running task instance.
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument (
+        '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helperTarget + '"')
+    $existingSelfTask = Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue
+    if ($null -eq $existingSelfTask) {
+        $triggers = @(
+            (New-ScheduledTaskTrigger -AtStartup),
+            (New-ScheduledTaskTrigger -Daily -At '03:00')
+        )
+        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'Safely updates Idle Shutdown at startup or during unattended daily maintenance.' -ErrorAction Stop | Out-Null
+        $createdSelfUpdateTask = $true
+        Write-Host "Created SYSTEM self-updater task: $selfUpdateTaskName"
+    }
+    else {
+        $oldAction = @($existingSelfTask.Actions) | Select-Object -First 1
+        if ($null -eq $oldAction -or
+            $oldAction.Execute -ne $action.Execute -or
+            $oldAction.Arguments -ne $action.Arguments) {
+            $previousSelfUpdateTaskXml = Export-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction Stop
+            Set-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -ErrorAction Stop | Out-Null
+            Write-Host "Updated future SYSTEM self-updater runs to: $helperTarget"
+        }
+    }
+}
+
+
+    # A successful upgrade can now discard the previous application binaries.
+    if (Test-Path $backupDir) {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+catch {
+    $failure = $_
+    Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
+    if ($createdSelfUpdateTask) {
+        Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    elseif ($previousSelfUpdateTaskXml) {
+        try {
+            Register-ScheduledTask -TaskName $selfUpdateTaskName -Xml $previousSelfUpdateTaskXml -Force -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Write-Warning ('Could not restore previous self-updater task: ' + $_.Exception.Message)
+        }
+    }
+
+    if ($servicesTouched) {
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+        try { Stop-InstalledAgents } catch { Write-Warning $_.Exception.Message }
+
+        # Preserve the previous version if the directory swap has started.
+        if ($swapped -or (Test-Path $backupDir)) {
+            if (Test-Path $installDir) {
+                try {
+                    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning ('Could not remove failed installation: ' + $_.Exception.Message)
+                }
+            }
+            if (Test-Path $backupDir) {
+                Move-Item -LiteralPath $backupDir -Destination $installDir -ErrorAction Stop
+                Write-Warning 'Restored previous IdleShutdown application binaries.'
+            }
+        }
+
+        if ($null -ne $previousConfig) {
+            $previousConfig | Set-Content -LiteralPath $configPath -Encoding UTF8
+        }
+        if ($previousTaskXml) {
+            try {
+                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force -ErrorAction Stop | Out-Null
+            }
+            catch { Write-Warning ('Could not restore agent task: ' + $_.Exception.Message) }
+        }
+        if ($hadExistingInstall -and $wasServiceRunning) {
+            try { Start-Service -Name $serviceName -ErrorAction Stop }
+            catch { Write-Warning ('Could not restart previous service: ' + $_.Exception.Message) }
+        }
+        if ($previousInventoryVersion) {
+            try {
+                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -Name 'DisplayVersion' -Value $previousInventoryVersion -ErrorAction Stop
+            }
+            catch { Write-Warning ('Could not restore installed version registry value: ' + $_.Exception.Message) }
+        }
+    }
+    throw $failure
+}
+finally {
+    if ($guard) { $guard.Dispose() }
+    if (Test-Path $stageDir) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+) {
+        throw "Unexpected non-stable helper version: $helperVersion"
     }
     $helperTarget = Join-Path $updaterDir ("SelfUpdate-$helperVersion.ps1")
     if (-not (Test-Path -LiteralPath $helperTarget)) {
