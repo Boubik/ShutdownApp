@@ -1,0 +1,230 @@
+using System.Diagnostics;
+using System.Text;
+
+namespace IdleShutdown.ServiceApp;
+
+// Coordinates one maintenance cycle at a time. Never kills an in-flight installer.
+// Cancellation means "do not start another stage", not "terminate this installation".
+internal sealed class IdleMaintenance
+{
+    private readonly object _sync = new();
+    private Task? _task;
+    private bool _cancelRequested;
+    private bool _completed;
+    private bool _warnedOverrun;
+    private DateTime _startedUtc;
+    private AppConfig? _settings;
+
+    public bool Running
+    {
+        get { lock (_sync) return _task is { IsCompleted: false }; }
+    }
+
+    public bool Completed
+    {
+        get { lock (_sync) return _completed && _task?.IsCompleted == true; }
+    }
+
+    public void BeginIfNeeded(AppConfig config)
+    {
+        lock (_sync)
+        {
+            if (_task is { IsCompleted: false } || _completed)
+                return;
+            _cancelRequested = false;
+            _warnedOverrun = false;
+            _completed = false;
+            _startedUtc = DateTime.UtcNow;
+            _settings = config;
+            _task = Task.Run(RunAsync);
+            Log.Write("Maintenance: cycle started.");
+        }
+    }
+
+    public void Cancel(string reason)
+    {
+        lock (_sync)
+        {
+            if (_task is null) return;
+            if (!_cancelRequested)
+                Log.Write($"Maintenance: cancellation requested ({reason}); active installer will finish.");
+            _cancelRequested = true;
+            _completed = false;
+            // Keep the current Task reference until it exits, to prevent overlap.
+        }
+    }
+
+    public void ResetIfSafe()
+    {
+        lock (_sync)
+        {
+            if (_task is { IsCompleted: false }) return;
+            _task = null;
+            _completed = false;
+            _cancelRequested = false;
+            _settings = null;
+        }
+    }
+
+    public void CheckOverrun()
+    {
+        lock (_sync)
+        {
+            if (_task is not { IsCompleted: false } || _settings is null || _warnedOverrun)
+                return;
+            if (DateTime.UtcNow - _startedUtc <= TimeSpan.FromMinutes(_settings.MaintenanceMaxMinutes))
+                return;
+            _warnedOverrun = true;
+            _cancelRequested = true;
+            Log.Write("Maintenance: maximum duration exceeded; no more stages will start. Waiting for active installer (never force-kill).");
+        }
+    }
+
+    private bool MayStartNextStage()
+    {
+        lock (_sync)
+            return !_cancelRequested && _settings is not null &&
+                   DateTime.UtcNow - _startedUtc < TimeSpan.FromMinutes(_settings.MaintenanceMaxMinutes);
+    }
+
+    private async Task RunAsync()
+    {
+        try
+        {
+            AppConfig config;
+            lock (_sync) config = _settings!;
+
+            if (config.WindowsUpdateEnabled && MayStartNextStage())
+                await RunWindowsUpdateAsync(config).ConfigureAwait(false);
+
+            if (config.ChocolateyEnabled && MayStartNextStage())
+                await RunChocolateyAsync(config).ConfigureAwait(false);
+
+            lock (_sync)
+                _completed = !_cancelRequested;
+            Log.Write(_completed
+                ? "Maintenance: cycle completed; shutdown may proceed after final safety checks."
+                : "Maintenance: cancelled or timed out; automatic shutdown is not authorized.");
+        }
+        catch (Exception ex)
+        {
+            lock (_sync) _completed = false;
+            Log.Write($"Maintenance failed: {ex.GetType().Name}: {ex.Message}");
+            // Do not authorize shutdown following an unhandled maintenance error.
+        }
+    }
+
+    private static async Task RunWindowsUpdateAsync(AppConfig config)
+    {
+        // Windows Update Agent API, executed within LocalSystem, without a desktop prompt.
+        // Optional drivers are opt-in. This API does not request a system reboot.
+        const string script = """
+            $ErrorActionPreference = 'Stop'
+            try {
+                $session = New-Object -ComObject Microsoft.Update.Session
+                $searcher = $session.CreateUpdateSearcher()
+                $result = $searcher.Search("IsInstalled=0 and IsHidden=0")
+                $selected = New-Object -ComObject Microsoft.Update.UpdateColl
+                foreach ($u in $result.Updates) {
+                    $isDriver = $u.Type -eq 2
+                    if ($isDriver -and $env:IDLE_DRIVER_UPDATES -ne '1') { continue }
+                    if ($isDriver -and $env:IDLE_OPTIONAL_DRIVERS -ne '1' -and $u.BrowseOnly) { continue }
+                    if (-not $isDriver -and $u.BrowseOnly) { continue }
+                    if ($u.InstallationBehavior.CanRequestUserInput) {
+                        Write-Output ("SKIP interactive update: " + $u.Title)
+                        continue
+                    }
+                    if (-not $u.EulaAccepted) { $u.AcceptEula() }
+                    [void]$selected.Add($u)
+                    Write-Output ("SELECT " + $u.Title)
+                }
+                Write-Output ("Updates selected: " + $selected.Count)
+                if ($selected.Count -eq 0) { exit 0 }
+                $downloader = $session.CreateUpdateDownloader()
+                $downloader.Updates = $selected
+                $downloadResult = $downloader.Download()
+                Write-Output ("Download result: " + $downloadResult.ResultCode)
+                $ready = New-Object -ComObject Microsoft.Update.UpdateColl
+                foreach ($u in $selected) {
+                    if ($u.IsDownloaded) { [void]$ready.Add($u) }
+                    else { Write-Output ("DOWNLOAD FAILED " + $u.Title) }
+                }
+                if ($ready.Count -eq 0) { exit 1 }
+                $installer = $session.CreateUpdateInstaller()
+                $installer.Updates = $ready
+                $installer.AllowSourcePrompts = $false
+                $installResult = $installer.Install()
+                Write-Output ("Install result: " + $installResult.ResultCode + "; reboot required: " + $installResult.RebootRequired)
+                if ($installResult.ResultCode -ge 4) { exit 1 }
+                exit 0
+            } catch {
+                Write-Error $_
+                exit 1
+            }
+            """;
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        var psi = new ProcessStartInfo
+        {
+            FileName = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
+            Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.Environment["IDLE_DRIVER_UPDATES"] = config.DriverUpdatesEnabled ? "1" : "0";
+        psi.Environment["IDLE_OPTIONAL_DRIVERS"] = config.OptionalDriversEnabled ? "1" : "0";
+        await RunProcessAsync("Windows Update", psi).ConfigureAwait(false);
+    }
+
+    private static async Task RunChocolateyAsync(AppConfig config)
+    {
+        var home = Environment.GetEnvironmentVariable("ChocolateyInstall");
+        var executable = !string.IsNullOrWhiteSpace(home)
+            ? Path.Combine(home, "bin", "choco.exe")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "chocolatey", "bin", "choco.exe");
+        // Chocolatey is normally installed in C:\ProgramData\chocolatey.
+        if (!File.Exists(executable))
+        {
+            Log.Write("Maintenance: Chocolatey not installed; skipping.");
+            return;
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in new[] { "upgrade", "all", "-y", "--no-progress", "--except=idle-shutdown" })
+            psi.ArgumentList.Add(argument);
+        if (!string.IsNullOrWhiteSpace(config.ChocolateySource))
+        {
+            psi.ArgumentList.Add("--source");
+            psi.ArgumentList.Add(config.ChocolateySource);
+        }
+        await RunProcessAsync("Chocolatey", psi).ConfigureAwait(false);
+    }
+
+    private static async Task RunProcessAsync(string stage, ProcessStartInfo psi)
+    {
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        Log.Write($"Maintenance: starting {stage}.");
+        using var process = new Process { StartInfo = psi };
+        process.Start();
+        // Drain both pipes concurrently to avoid blocking an installer on full buffers.
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        var output = await stdout.ConfigureAwait(false);
+        var error = await stderr.ConfigureAwait(false);
+        // Avoid logging tokens or credentials from arbitrary updater output.
+        Log.Write($"Maintenance: {stage} exited with code {process.ExitCode}; stdout chars={output.Length}; stderr chars={error.Length}.");
+        if (process.ExitCode != 0 && process.ExitCode != 2 && process.ExitCode != 3010)
+            Log.Write($"Maintenance: {stage} reported a non-success exit code.");
+        if (process.ExitCode == 3010)
+            Log.Write($"Maintenance: {stage} requires reboot later; no restart requested.");
+        if (process.ExitCode == 1641)
+            Log.Write($"Maintenance WARNING: {stage} reports that an installer initiated a reboot.");
+    }
+}
