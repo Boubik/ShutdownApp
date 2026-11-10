@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.0
+
+Stabilní vydání navazuje přímo na otestovanou řadu `2.0.0-beta.1` až `2.0.0-beta.8`.
+
+- Přidává volitelnou automatickou údržbu Windows Update včetně standardních a konfigurovatelných aktualizací ovladačů.
+- Přidává automatický `choco upgrade all` z určeného Chocolatey zdroje; chybějící Chocolatey se bezpečně přeskočí.
+- Spouští údržbu **současně se zahájením upozornění na vypnutí**, nikoliv až po skončení odpočtu. V `00:00` ponechává okno otevřené, dokud aktualizace neskončí.
+- Koordinuje instalační fáze Windows Update a Chocolatey proti kolizím a dokončení aktivních instalací před vypnutím. Zrušení upozornění zastaví zahajování dalších aktualizací, nikoliv právě běžící instalátor.
+- Přidává diagnostiku průběhu údržby a přehled výsledků Windows Update a aktualizovaných verzí Chocolatey; podrobné `DEBUG` záznamy jsou pouze v prerelease sestaveních.
+- Zavádí bezpečnější Chocolatey upgrade aplikace: ochrana probíhající údržby, zastavení agentů a služby, připravené instalační soubory, záloha a pokus o rollback při neúspěchu.
+- Přidává volitelnou **samoaktualizaci pouze na stabilní vydání** v oddělené SYSTEM scheduled task; beta/RC verze nelze instalovat automaticky.
+- Rotuje `SelfUpdate.log` po 2 MiB na dvě zálohy, stejně jako hlavní provozní log; při přechodu z beta.8 bezpečně přesměruje budoucí běhy pomocné úlohy na stabilní skript.
+- Zachovává existující časování, ochrany přihlášených relací, možnost zrušení vypnutí a konfiguraci při Chocolatey upgradu.
+
+
 ## 1.3.4
 
 - Registers Idle Shutdown in the 64-bit Windows installed-software inventory for Tactical RMM and other management tools.
