@@ -8,6 +8,7 @@ namespace IdleShutdown.ServiceApp;
 internal sealed class IdleMaintenance
 {
     private readonly object _sync = new();
+    private const string InstallationGateName = @"Global\IdleShutdown.MaintenanceInstallGate";
     private Task? _task;
     private bool _cancelRequested;
     private bool _completed;
@@ -126,11 +127,19 @@ internal sealed class IdleMaintenance
                 $"ChocolateySource={(config.ChocolateySource is null ? "system defaults" : "custom")}, " +
                 $"maxDuration={config.MaintenanceMaxMinutes} minutes.");
 
+            // Independent update tasks: WUA can scan and download while
+            // Chocolatey upgrades packages. Both coordinate *installation*
+            // via the same cross-process semaphore to avoid MSI conflicts.
+            var tasks = new List<Task>(2);
             if (config.WindowsUpdateEnabled && MayStartNextStage())
-                await RunWindowsUpdateAsync(config).ConfigureAwait(false);
+                tasks.Add(RunWindowsUpdateAsync(config));
 
             if (config.ChocolateyEnabled && MayStartNextStage())
-                await RunChocolateyAsync(config).ConfigureAwait(false);
+                tasks.Add(RunChocolateyAsync(config));
+
+            Log.Write($"Maintenance: {tasks.Count} update stage(s) started independently; " +
+                "shutdown will wait until every stage exits.");
+            await Task.WhenAll(tasks).ConfigureAwait(false);
 
             bool success;
             lock (_sync)
@@ -211,14 +220,28 @@ internal sealed class IdleMaintenance
                 $installer = $session.CreateUpdateInstaller()
                 $installer.Updates = $ready
                 $installer.AllowSourcePrompts = $false
-                $installResult = $installer.Install()
-                for ($i = 0; $i -lt $ready.Count; $i++) {
-                    $itemResult = $installResult.GetUpdateResult($i)
-                    Write-Output ("IDLE_WU|UPDATE_RESULT|" + $ready.Item($i).Title +
-                        "|code=" + $itemResult.ResultCode + ";hresult=" + $itemResult.HResult)
+
+                # Chocolatey may install MSI packages. Share this semaphore
+                # with the service's Chocolatey runner to avoid concurrency
+                # during installation (scan/download stay independent).
+                $installGate = [System.Threading.Semaphore]::new(
+                    1, 1, 'Global\IdleShutdown.MaintenanceInstallGate')
+                Write-Output "IDLE_WU|WAITING_FOR_INSTALL_GATE|Chocolatey may still be installing"
+                [void] $installGate.WaitOne()
+                try {
+                    Write-Output "IDLE_WU|INSTALLING|Installation gate acquired"
+                    $installResult = $installer.Install()
+                    for ($i = 0; $i -lt $ready.Count; $i++) {
+                        $itemResult = $installResult.GetUpdateResult($i)
+                        Write-Output ("IDLE_WU|UPDATE_RESULT|" + $ready.Item($i).Title +
+                            "|code=" + $itemResult.ResultCode + ";hresult=" + $itemResult.HResult)
+                    }
+                    Write-Output ("IDLE_WU|INSTALL_RESULT|code=" + $installResult.ResultCode +
+                        ";rebootRequired=" + $installResult.RebootRequired + ";attempted=" + $ready.Count)
+                } finally {
+                    [void] $installGate.Release()
+                    $installGate.Dispose()
                 }
-                Write-Output ("IDLE_WU|INSTALL_RESULT|code=" + $installResult.ResultCode +
-                    ";rebootRequired=" + $installResult.RebootRequired + ";attempted=" + $ready.Count)
                 if ($installResult.ResultCode -ge 4) { exit 1 }
                 exit 0
             } catch {
@@ -272,7 +295,23 @@ internal sealed class IdleMaintenance
         }
         Log.Debug($"Chocolatey upgrade source: {(config.ChocolateySource is null ? "machine defaults" : "custom feed")}; " +
             "excluding idle-shutdown to prevent replacing the running service.");
-        var code = await RunProcessAsync("Chocolatey", psi).ConfigureAwait(false);
+        // SemaphoreSlim would not coordinate with the separate WUA PowerShell
+        // process. A named system semaphore works across both processes.
+        using var installationGate = new Semaphore(1, 1, InstallationGateName);
+        Log.Debug("Chocolatey waiting for Windows Update installer gate.");
+        await Task.Run(() => installationGate.WaitOne()).ConfigureAwait(false);
+
+        int code;
+        try
+        {
+            Log.Debug("Chocolatey acquired installer gate; starting upgrade.");
+            code = await RunProcessAsync("Chocolatey", psi).ConfigureAwait(false);
+        }
+        finally
+        {
+            installationGate.Release();
+            Log.Debug("Chocolatey released installer gate.");
+        }
         var after = await ReadChocolateyInventoryAsync(executable).ConfigureAwait(false);
 
         if (before is null || after is null)
