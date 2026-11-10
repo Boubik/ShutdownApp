@@ -82,13 +82,13 @@ choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.5 `
 ## Beta 2.0.0-beta.6 — safe self-upgrade and uninstall
 
 The automatic idle-maintenance Chocolatey runner continues to use
-\`choco upgrade all --except=idle-shutdown\`. Self-updating the binaries of
+`choco upgrade all --except=idle-shutdown`. Self-updating the binaries of
 the service currently orchestrating updates is unsafe. Upgrade IdleShutdown
 as a separate Chocolatey operation (for example through Tactical RMM), not
 from its own maintenance job.
 
 Safety protections:
-- The service exclusively holds \`C:\ProgramData\IdleShutdown\maintenance.lock\`
+- The service exclusively holds `C:\ProgramData\IdleShutdown\maintenance.lock`
   while a maintenance cycle is running. Chocolatey install/uninstall attempts
   acquire the same lock; if it is unavailable they fail before stopping the
   service or changing installed binaries. Retry later.
@@ -114,3 +114,17 @@ maintenance in a lab before broad deployment. An external administrator who
 force-kills the service, a power loss or an installer that schedules its own
 reboot can still interrupt ongoing software changes. The service does not
 perform hot self-replacement.
+
+### Installing beta.6 with a full test configuration
+
+After uploading the beta.6 GitHub asset to the UJEP Chocolatey test feed:
+
+~~~powershell
+$repo = "https://choco.cpto.ujep.cz/nuget/choco-internal/"
+choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.6 --source="$repo" --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:true /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30'"
+~~~
+
+If an update is running, the installer refuses to touch the application and
+the previous version continues running. Wait for Windows Update/Chocolatey to
+finish, then rerun the exact command. Do not manually stop the service during
+active maintenance. Use only a dedicated Windows test machine for beta.6.
