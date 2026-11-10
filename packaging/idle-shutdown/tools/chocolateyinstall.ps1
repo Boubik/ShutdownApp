@@ -278,6 +278,7 @@ $oldService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 $wasServiceRunning = $null -ne $oldService -and $oldService.Status -ne 'Stopped'
 $guard = $null
 $createdSelfUpdateTask = $false
+$previousSelfUpdateTaskXml = $null
 $servicesTouched = $false
 $swapped = $false
 
@@ -446,12 +447,14 @@ if ($config.SelfUpdateEnabled) {
         Copy-Item -LiteralPath $helperSource -Destination $helperTarget -ErrorAction Stop
     }
 
-    # Register once. Keep the same immutable script during a subsequent
-    # upgrade because this task may currently be executing that script.
-    if (-not (Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue)) {
-        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $action = New-ScheduledTaskAction -Execute $powershell -Argument (
-            '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helperTarget + '"')
+    # The running beta.8 helper must stay untouched; create a new immutable
+    # stable helper, then update the scheduled task's FUTURE action only.
+    # Set-ScheduledTask changes do not affect an already-running task instance.
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument (
+        '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helperTarget + '"')
+    $existingSelfTask = Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue
+    if ($null -eq $existingSelfTask) {
         $triggers = @(
             (New-ScheduledTaskTrigger -AtStartup),
             (New-ScheduledTaskTrigger -Daily -At '03:00')
@@ -461,6 +464,16 @@ if ($config.SelfUpdateEnabled) {
         Register-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'Safely updates Idle Shutdown at startup or during unattended daily maintenance.' -ErrorAction Stop | Out-Null
         $createdSelfUpdateTask = $true
         Write-Host "Created SYSTEM self-updater task: $selfUpdateTaskName"
+    }
+    else {
+        $oldAction = @($existingSelfTask.Actions) | Select-Object -First 1
+        if ($null -eq $oldAction -or
+            $oldAction.Execute -ne $action.Execute -or
+            $oldAction.Arguments -ne $action.Arguments) {
+            $previousSelfUpdateTaskXml = Export-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction Stop
+            Set-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -ErrorAction Stop | Out-Null
+            Write-Host "Updated future SYSTEM self-updater runs to: $helperTarget"
+        }
     }
 }
 
@@ -475,6 +488,14 @@ catch {
     Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
     if ($createdSelfUpdateTask) {
         Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    elseif ($previousSelfUpdateTaskXml) {
+        try {
+            Register-ScheduledTask -TaskName $selfUpdateTaskName -Xml $previousSelfUpdateTaskXml -Force -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Write-Warning ('Could not restore previous self-updater task: ' + $_.Exception.Message)
+        }
     }
 
     if ($servicesTouched) {
