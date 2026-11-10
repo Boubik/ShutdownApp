@@ -232,12 +232,15 @@ internal sealed class IdleMaintenance
             ? Path.Combine(home, "bin", "choco.exe")
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 "chocolatey", "bin", "choco.exe");
-        // Chocolatey is normally installed in C:\ProgramData\chocolatey.
         if (!File.Exists(executable))
         {
             Log.Write("Maintenance: Chocolatey not installed; skipping.");
             return;
         }
+
+        // Chocolatey 2.x 'list --limit-output' is a local package inventory.
+        // Record version changes, never unfiltered installer output (which may contain secrets).
+        var before = await ReadChocolateyInventoryAsync(executable).ConfigureAwait(false);
 
         var psi = new ProcessStartInfo
         {
@@ -247,34 +250,166 @@ internal sealed class IdleMaintenance
         };
         foreach (var argument in new[] { "upgrade", "all", "-y", "--no-progress", "--except=idle-shutdown" })
             psi.ArgumentList.Add(argument);
+
         if (!string.IsNullOrWhiteSpace(config.ChocolateySource))
         {
             psi.ArgumentList.Add("--source");
             psi.ArgumentList.Add(config.ChocolateySource);
         }
-        await RunProcessAsync("Chocolatey", psi).ConfigureAwait(false);
+        Log.Debug($"Chocolatey upgrade source: {(config.ChocolateySource is null ? "machine defaults" : "custom feed")}; " +
+            "excluding idle-shutdown to prevent replacing the running service.");
+        var code = await RunProcessAsync("Chocolatey", psi).ConfigureAwait(false);
+        var after = await ReadChocolateyInventoryAsync(executable).ConfigureAwait(false);
+
+        if (before is null || after is null)
+        {
+            Log.Write("Maintenance: Chocolatey package inventory unavailable; see Chocolatey log for package details.");
+            return;
+        }
+
+        var changed = 0;
+        foreach (var pair in after.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!before.TryGetValue(pair.Key, out var previous))
+            {
+                changed++;
+                Log.Debug($"Chocolatey package installed: {pair.Key} {pair.Value}.");
+            }
+            else if (!string.Equals(previous, pair.Value, StringComparison.OrdinalIgnoreCase))
+            {
+                changed++;
+                Log.Debug($"Chocolatey package updated: {pair.Key} {previous} -> {pair.Value}.");
+            }
+        }
+
+        if (changed == 0)
+        {
+            Log.Write(code == 0 || code == 2
+                ? "Maintenance: Chocolatey completed; no package version changes detected."
+                : $"Maintenance: Chocolatey reported exit code {code}; no package version changes detected.");
+        }
+        else
+        {
+            Log.Write($"Maintenance: Chocolatey completed with {changed} installed/updated package(s), exit code {code}.");
+        }
     }
 
-    private static async Task RunProcessAsync(string stage, ProcessStartInfo psi)
+    private static async Task<Dictionary<string, string>?> ReadChocolateyInventoryAsync(
+        string executable)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = executable,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            psi.ArgumentList.Add("list");
+            psi.ArgumentList.Add("--limit-output");
+            using var process = new Process { StartInfo = psi };
+            process.Start();
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().ConfigureAwait(false);
+            var output = await outputTask.ConfigureAwait(false);
+            await errorTask.ConfigureAwait(false);
+            if (process.ExitCode != 0)
+            {
+                Log.Debug($"Chocolatey inventory exit code: {process.ExitCode}.");
+                return null;
+            }
+
+            var packages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in output.Split('\n'))
+            {
+                var parts = line.Trim().Split('|');
+                if (parts.Length != 2) continue;
+                var id = parts[0].Trim();
+                var version = parts[1].Trim();
+                if (id.Length == 0 || version.Length == 0 || id.Length > 120 || version.Length > 120 ||
+                    id.Any(c => !(char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.')) ||
+                    version.Any(c => !(char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.' || c == '+')))
+                    continue;
+                packages[id] = version;
+            }
+            Log.Debug($"Chocolatey inventory: {packages.Count} installed package(s).");
+            return packages;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"Maintenance: Chocolatey inventory query failed ({ex.GetType().Name}).");
+            return null;
+        }
+    }
+
+    private static async Task<int> RunProcessAsync(string stage, ProcessStartInfo psi)
     {
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
         Log.Write($"Maintenance: starting {stage}.");
+        var timer = Stopwatch.StartNew();
         using var process = new Process { StartInfo = psi };
         process.Start();
-        // Drain both pipes concurrently to avoid blocking an installer on full buffers.
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
+
+        // Always drain both pipes concurrently. Stream output so verbose installers do
+        // not consume unbounded memory or deadlock when filling redirected pipes.
+        var stdout = DrainOutputAsync(process.StandardOutput, stage, isError: false);
+        var stderr = DrainOutputAsync(process.StandardError, stage, isError: true);
         await process.WaitForExitAsync().ConfigureAwait(false);
-        var output = await stdout.ConfigureAwait(false);
-        var error = await stderr.ConfigureAwait(false);
-        // Avoid logging tokens or credentials from arbitrary updater output.
-        Log.Write($"Maintenance: {stage} exited with code {process.ExitCode}; stdout chars={output.Length}; stderr chars={error.Length}.");
+        var counts = await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
+
+        Log.Write($"Maintenance: {stage} finished; exitCode={process.ExitCode}; " +
+            $"duration={timer.Elapsed:hh\\:mm\\:ss}; stdoutLines={counts[0]}; stderrLines={counts[1]}.");
+
         if (process.ExitCode != 0 && process.ExitCode != 2 && process.ExitCode != 3010)
-            Log.Write($"Maintenance: {stage} reported a non-success exit code.");
+            Log.Write($"Maintenance: {stage} reported an error or non-success exit code.");
         if (process.ExitCode == 3010)
-            Log.Write($"Maintenance: {stage} requires reboot later; no restart requested.");
+            Log.Write($"Maintenance: {stage} requires a later reboot; no restart requested.");
         if (process.ExitCode == 1641)
             Log.Write($"Maintenance WARNING: {stage} reports that an installer initiated a reboot.");
+
+        return process.ExitCode;
+    }
+
+    private static async Task<int> DrainOutputAsync(
+        StreamReader reader, string stage, bool isError)
+    {
+        var count = 0;
+        var reported = 0;
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            count++;
+            // Only log structured WUA results and safe, selected Chocolatey summaries.
+            // Untrusted package scripts can print credentials to stdout/stderr.
+            if (isError) continue;
+            if (stage == "Windows Update" && line.StartsWith("IDLE_WU|", StringComparison.Ordinal))
+            {
+                var entry = line.Length > 500 ? line[..500] + " [truncated]" : line;
+                if (entry.StartsWith("IDLE_WU|SUMMARY|", StringComparison.Ordinal) ||
+                    entry.StartsWith("IDLE_WU|NONE|", StringComparison.Ordinal) ||
+                    entry.StartsWith("IDLE_WU|INSTALL_RESULT|", StringComparison.Ordinal) ||
+                    entry.StartsWith("IDLE_WU|ERROR|", StringComparison.Ordinal))
+                    Log.Write("Maintenance: Windows Update " + entry);
+                else if (reported++ < 250)
+                    Log.Debug("Maintenance: Windows Update " + entry);
+            }
+            else if (stage == "Chocolatey" && reported < 30 &&
+                     (line.StartsWith("Chocolatey upgraded ", StringComparison.OrdinalIgnoreCase) ||
+                      line.StartsWith("Chocolatey installed ", StringComparison.OrdinalIgnoreCase) ||
+                      line.StartsWith("You have ", StringComparison.OrdinalIgnoreCase) && line.Contains("outdated", StringComparison.OrdinalIgnoreCase)))
+            {
+                reported++;
+                // These messages are package-manager summaries; never log command lines,
+                // raw errors, URLs or arbitrary installer output.
+                var summary = line.Length > 250 ? line[..250] + " [truncated]" : line;
+                Log.Debug("Maintenance: Chocolatey " + summary);
+            }
+        }
+        if (reported >= 250)
+            Log.Debug($"Maintenance: {stage} verbose update details capped at 250 lines.");
+        return count;
     }
 }
