@@ -39,7 +39,7 @@ jobs:
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
 
-          if ($version -notmatch '^\d+\.\d+\.\d+ {
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
               throw "VERSION must contain a semantic version such as 1.2.3. Received: '$version'."
           }
 
@@ -63,144 +63,16 @@ jobs:
 
           "### Preparing Idle Shutdown $tag" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
-      - name: Verify stable-only release and updater safeguards
+      - name: Verify stable release and updater safeguards
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content VERSION -Raw).Trim()
-          if ($version -notmatch '^\d+\.\d+\.\d+
-
-      - name: Verify release artifacts
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          $packagePath = 'dist\package\idle-shutdown.nupkg'
-
-          if (-not (Test-Path $packagePath)) {
-              throw "Expected package is missing: $packagePath"
-          }
-
-          $packages = @(Get-ChildItem 'dist\package' -Filter '*.nupkg' -File)
-          if ($packages.Count -ne 1) {
-              throw "Expected exactly one .nupkg, found $($packages.Count)."
-          }
-
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $packagePath))
-
-          try {
-              $nuspecEntry = $archive.Entries |
-                  Where-Object { $_.FullName -eq 'idle-shutdown.nuspec' } |
-                  Select-Object -First 1
-
-              if ($null -eq $nuspecEntry) {
-                  throw 'The package does not contain idle-shutdown.nuspec.'
-              }
-
-              $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())
-              try {
-                  [xml] $nuspec = $reader.ReadToEnd()
-              }
-              finally {
-                  $reader.Dispose()
-              }
-          }
-          finally {
-              $archive.Dispose()
-          }
-
-          $versionNode = $nuspec.SelectSingleNode(
-              "/*[local-name()='package']/*[local-name()='metadata']/*[local-name()='version']")
-
-          if ($null -eq $versionNode) {
-              throw 'The package nuspec does not contain a version element.'
-          }
-
-          $packageVersion = $versionNode.InnerText.Trim()
-          if ($packageVersion -ne $env:RELEASE_VERSION) {
-              throw "Package version '$packageVersion' does not match VERSION '$env:RELEASE_VERSION'."
-          }
-
-          foreach ($executable in @(
-              'dist\Service\IdleShutdown.Service.exe',
-              'dist\Agent\IdleShutdown.Agent.exe'
-          )) {
-              if (-not (Test-Path $executable)) {
-                  throw "Expected executable is missing: $executable"
-              }
-
-              $productVersion = (Get-Item $executable).VersionInfo.ProductVersion
-              if ($productVersion -notlike "$($env:RELEASE_VERSION)*") {
-                  throw "$executable has product version '$productVersion', expected '$env:RELEASE_VERSION'."
-              }
-          }
-
-          "- Verified package and executable version: ``$env:RELEASE_VERSION``" |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Generate release notes from commits
-        id: notes
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          $previousTag = @(
-              git tag --merged HEAD --sort=-version:refname 'v[0-9]*'
-          ) | Select-Object -First 1
-
-          if ([string]::IsNullOrWhiteSpace($previousTag)) {
-              $range = 'HEAD'
-              $sinceText = 'the beginning of the repository'
-              $commits = @(git log HEAD --no-merges --pretty=format:'- %s (`%h`)')
-          }
-          else {
-              $range = "$previousTag..HEAD"
-              $sinceText = $previousTag
-              $commits = @(git log $range --no-merges --pretty=format:'- %s (`%h`)')
-          }
-
-          if ($commits.Count -eq 0) {
-              $commits = @('- Version metadata update.')
-          }
-
-          $notes = @(
-              "# Idle Shutdown v$env:RELEASE_VERSION",
-              '',
-              "## Changes since $sinceText",
-              '',
-              $commits,
-              '',
-              '## Download',
-              '',
-              '- `idle-shutdown.nupkg` — self-contained Windows x64 service, agent and Chocolatey installer.'
-          )
-
-          $notes | Out-File -FilePath 'release-notes.md' -Encoding utf8
-
-          "previous_tag=$previousTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "- Release notes contain $($commits.Count) commit(s) since $sinceText." |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          gh release create $env:RELEASE_TAG `
-              'dist\package\idle-shutdown.nupkg' `
-              --repo $env:GITHUB_REPOSITORY `
-              --target $env:GITHUB_SHA `
-              --title "Idle Shutdown $env:RELEASE_TAG" `
-              --notes-file 'release-notes.md' `
-              --latest
-
-          "- Published release: ``$env:RELEASE_TAG``" |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-) {
-            throw "Main branch releases must be stable SemVer without a prerelease suffix: $version"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Stable releases must use numeric SemVer: $version"
           }
           $defines = dotnet msbuild 'src/IdleShutdown.Service/IdleShutdown.Service.csproj' -getProperty:DefineConstants
           if ($LASTEXITCODE -ne 0 -or $defines -match 'PRERELEASE_VERBOSE') {
-            throw "Stable service build MUST NOT enable PRERELEASE_VERBOSE: $defines"
+            throw "Stable build unexpectedly includes debug diagnostics: $defines"
           }
           foreach ($file in @(
             'packaging/idle-shutdown/tools/chocolateyinstall.ps1',
@@ -212,355 +84,28 @@ jobs:
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $file).Path, [ref]$tokens, [ref]$parseErrors)
             if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
-              foreach ($errorItem in $parseErrors) {
-                Write-Host ("{0}:{1}: {2}" -f $file, $errorItem.Extent.StartLineNumber, $errorItem.Message)
-              }
-              throw "PowerShell syntax validation failed: $file"
+              throw "PowerShell script has a syntax error: $file"
             }
           }
           $helper = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
-          if (-not $helper.Contains('--version=$targetVersion') -or
-              -not $helper.Contains('Skipped non-stable upgrade target') -or
-              -not $helper.Contains('$maxLogBytes = 2MB') -or
-              -not $helper.Contains('SelfUpdate.log')) {
-            throw 'Stable updater is missing version pinning or bounded log rotation.'
-          }
-          if ($helper.Contains('SelfUpdateAllowPrerelease') -or
-              $helper -match '(?m)\$upgradeArgs\s*\+=\s*[''"]--pre[''"]' -or
-              $helper -match '(?m)\$queryArgs\s*\+=\s*[''"]--pre[''"]') {
-            throw 'Automatic self-updater MUST NEVER install prereleases.'
-          }
-          $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
-          if (-not $installer.Contains('Set-ScheduledTask -TaskName $selfUpdateTaskName') -or
-              -not $installer.Contains('Stop-InstalledAgents') -or
-              -not $installer.Contains('maintenance.lock')) {
-            throw 'Stable installer is missing safe updater handoff or process protections.'
-          }
-      - name: Run tests and build Windows package
-        run: .\build.bat
-
-      - name: Verify release artifacts
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          $packagePath = 'dist\package\idle-shutdown.nupkg'
-
-          if (-not (Test-Path $packagePath)) {
-              throw "Expected package is missing: $packagePath"
-          }
-
-          $packages = @(Get-ChildItem 'dist\package' -Filter '*.nupkg' -File)
-          if ($packages.Count -ne 1) {
-              throw "Expected exactly one .nupkg, found $($packages.Count)."
-          }
-
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $packagePath))
-
-          try {
-              $nuspecEntry = $archive.Entries |
-                  Where-Object { $_.FullName -eq 'idle-shutdown.nuspec' } |
-                  Select-Object -First 1
-
-              if ($null -eq $nuspecEntry) {
-                  throw 'The package does not contain idle-shutdown.nuspec.'
-              }
-
-              $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())
-              try {
-                  [xml] $nuspec = $reader.ReadToEnd()
-              }
-              finally {
-                  $reader.Dispose()
-              }
-          }
-          finally {
-              $archive.Dispose()
-          }
-
-          $versionNode = $nuspec.SelectSingleNode(
-              "/*[local-name()='package']/*[local-name()='metadata']/*[local-name()='version']")
-
-          if ($null -eq $versionNode) {
-              throw 'The package nuspec does not contain a version element.'
-          }
-
-          $packageVersion = $versionNode.InnerText.Trim()
-          if ($packageVersion -ne $env:RELEASE_VERSION) {
-              throw "Package version '$packageVersion' does not match VERSION '$env:RELEASE_VERSION'."
-          }
-
-          foreach ($executable in @(
-              'dist\Service\IdleShutdown.Service.exe',
-              'dist\Agent\IdleShutdown.Agent.exe'
-          )) {
-              if (-not (Test-Path $executable)) {
-                  throw "Expected executable is missing: $executable"
-              }
-
-              $productVersion = (Get-Item $executable).VersionInfo.ProductVersion
-              if ($productVersion -notlike "$($env:RELEASE_VERSION)*") {
-                  throw "$executable has product version '$productVersion', expected '$env:RELEASE_VERSION'."
-              }
-          }
-
-          "- Verified package and executable version: ``$env:RELEASE_VERSION``" |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Generate release notes from commits
-        id: notes
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          $previousTag = @(
-              git tag --merged HEAD --sort=-version:refname 'v[0-9]*'
-          ) | Select-Object -First 1
-
-          if ([string]::IsNullOrWhiteSpace($previousTag)) {
-              $range = 'HEAD'
-              $sinceText = 'the beginning of the repository'
-              $commits = @(git log HEAD --no-merges --pretty=format:'- %s (`%h`)')
-          }
-          else {
-              $range = "$previousTag..HEAD"
-              $sinceText = $previousTag
-              $commits = @(git log $range --no-merges --pretty=format:'- %s (`%h`)')
-          }
-
-          if ($commits.Count -eq 0) {
-              $commits = @('- Version metadata update.')
-          }
-
-          $notes = @(
-              "# Idle Shutdown v$env:RELEASE_VERSION",
-              '',
-              "## Changes since $sinceText",
-              '',
-              $commits,
-              '',
-              '## Download',
-              '',
-              '- `idle-shutdown.nupkg` — self-contained Windows x64 service, agent and Chocolatey installer.'
-          )
-
-          $notes | Out-File -FilePath 'release-notes.md' -Encoding utf8
-
-          "previous_tag=$previousTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "- Release notes contain $($commits.Count) commit(s) since $sinceText." |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          gh release create $env:RELEASE_TAG `
-              'dist\package\idle-shutdown.nupkg' `
-              --repo $env:GITHUB_REPOSITORY `
-              --target $env:GITHUB_SHA `
-              --title "Idle Shutdown $env:RELEASE_TAG" `
-              --notes-file 'release-notes.md' `
-              --latest
-
-          "- Published release: ``$env:RELEASE_TAG``" |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-) {
-              throw "VERSION must contain a semantic version such as 1.2.3. Received: '$version'."
-          }
-
-          $tag = "v$version"
-          git fetch --force --tags
-          if ($LASTEXITCODE -ne 0) {
-              throw "git fetch --tags failed with exit code $LASTEXITCODE."
-          }
-
-          $existingTags = @(git tag --list $tag)
-          if ($LASTEXITCODE -ne 0) {
-              throw "git tag --list failed with exit code $LASTEXITCODE."
-          }
-
-          if ($existingTags.Count -gt 0) {
-              throw "Tag $tag already exists. Increase VERSION before creating another release."
-          }
-
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-          "### Preparing Idle Shutdown $tag" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Verify stable-only release and updater safeguards
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = (Get-Content VERSION -Raw).Trim()
-          if ($version -notmatch '^\d+\.\d+\.\d+
-
-      - name: Verify release artifacts
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          $packagePath = 'dist\package\idle-shutdown.nupkg'
-
-          if (-not (Test-Path $packagePath)) {
-              throw "Expected package is missing: $packagePath"
-          }
-
-          $packages = @(Get-ChildItem 'dist\package' -Filter '*.nupkg' -File)
-          if ($packages.Count -ne 1) {
-              throw "Expected exactly one .nupkg, found $($packages.Count)."
-          }
-
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $packagePath))
-
-          try {
-              $nuspecEntry = $archive.Entries |
-                  Where-Object { $_.FullName -eq 'idle-shutdown.nuspec' } |
-                  Select-Object -First 1
-
-              if ($null -eq $nuspecEntry) {
-                  throw 'The package does not contain idle-shutdown.nuspec.'
-              }
-
-              $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())
-              try {
-                  [xml] $nuspec = $reader.ReadToEnd()
-              }
-              finally {
-                  $reader.Dispose()
-              }
-          }
-          finally {
-              $archive.Dispose()
-          }
-
-          $versionNode = $nuspec.SelectSingleNode(
-              "/*[local-name()='package']/*[local-name()='metadata']/*[local-name()='version']")
-
-          if ($null -eq $versionNode) {
-              throw 'The package nuspec does not contain a version element.'
-          }
-
-          $packageVersion = $versionNode.InnerText.Trim()
-          if ($packageVersion -ne $env:RELEASE_VERSION) {
-              throw "Package version '$packageVersion' does not match VERSION '$env:RELEASE_VERSION'."
-          }
-
-          foreach ($executable in @(
-              'dist\Service\IdleShutdown.Service.exe',
-              'dist\Agent\IdleShutdown.Agent.exe'
-          )) {
-              if (-not (Test-Path $executable)) {
-                  throw "Expected executable is missing: $executable"
-              }
-
-              $productVersion = (Get-Item $executable).VersionInfo.ProductVersion
-              if ($productVersion -notlike "$($env:RELEASE_VERSION)*") {
-                  throw "$executable has product version '$productVersion', expected '$env:RELEASE_VERSION'."
-              }
-          }
-
-          "- Verified package and executable version: ``$env:RELEASE_VERSION``" |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Generate release notes from commits
-        id: notes
-        env:
-          RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          $previousTag = @(
-              git tag --merged HEAD --sort=-version:refname 'v[0-9]*'
-          ) | Select-Object -First 1
-
-          if ([string]::IsNullOrWhiteSpace($previousTag)) {
-              $range = 'HEAD'
-              $sinceText = 'the beginning of the repository'
-              $commits = @(git log HEAD --no-merges --pretty=format:'- %s (`%h`)')
-          }
-          else {
-              $range = "$previousTag..HEAD"
-              $sinceText = $previousTag
-              $commits = @(git log $range --no-merges --pretty=format:'- %s (`%h`)')
-          }
-
-          if ($commits.Count -eq 0) {
-              $commits = @('- Version metadata update.')
-          }
-
-          $notes = @(
-              "# Idle Shutdown v$env:RELEASE_VERSION",
-              '',
-              "## Changes since $sinceText",
-              '',
-              $commits,
-              '',
-              '## Download',
-              '',
-              '- `idle-shutdown.nupkg` — self-contained Windows x64 service, agent and Chocolatey installer.'
-          )
-
-          $notes | Out-File -FilePath 'release-notes.md' -Encoding utf8
-
-          "previous_tag=$previousTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "- Release notes contain $($commits.Count) commit(s) since $sinceText." |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          gh release create $env:RELEASE_TAG `
-              'dist\package\idle-shutdown.nupkg' `
-              --repo $env:GITHUB_REPOSITORY `
-              --target $env:GITHUB_SHA `
-              --title "Idle Shutdown $env:RELEASE_TAG" `
-              --notes-file 'release-notes.md' `
-              --latest
-
-          "- Published release: ``$env:RELEASE_TAG``" |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-) {
-            throw "Main branch releases must be stable SemVer without a prerelease suffix: $version"
-          }
-          $defines = dotnet msbuild 'src/IdleShutdown.Service/IdleShutdown.Service.csproj' -getProperty:DefineConstants
-          if ($LASTEXITCODE -ne 0 -or $defines -match 'PRERELEASE_VERBOSE') {
-            throw "Stable service build MUST NOT enable PRERELEASE_VERBOSE: $defines"
-          }
-          foreach ($file in @(
-            'packaging/idle-shutdown/tools/chocolateyinstall.ps1',
-            'packaging/idle-shutdown/tools/chocolateyuninstall.ps1',
-            'packaging/idle-shutdown/tools/self-update.ps1'
-          )) {
-            $tokens = $null
-            $parseErrors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $file).Path, [ref]$tokens, [ref]$parseErrors)
-            if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
-              foreach ($errorItem in $parseErrors) {
-                Write-Host ("{0}:{1}: {2}" -f $file, $errorItem.Extent.StartLineNumber, $errorItem.Message)
-              }
-              throw "PowerShell syntax validation failed: $file"
+          foreach ($required in @('--version=$targetVersion',
+                                   'Skipped non-stable upgrade target',
+                                   '$maxLogBytes = 2MB')) {
+            if (-not $helper.Contains($required)) {
+              throw "Stable self-updater missing invariant: $required"
             }
           }
-          $helper = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
-          if (-not $helper.Contains('--version=$targetVersion') -or
-              -not $helper.Contains('Skipped non-stable upgrade target') -or
-              -not $helper.Contains('$maxLogBytes = 2MB') -or
-              -not $helper.Contains('SelfUpdate.log')) {
-            throw 'Stable updater is missing version pinning or bounded log rotation.'
-          }
           if ($helper.Contains('SelfUpdateAllowPrerelease') -or
-              $helper -match '(?m)\$upgradeArgs\s*\+=\s*[''"]--pre[''"]' -or
-              $helper -match '(?m)\$queryArgs\s*\+=\s*[''"]--pre[''"]') {
-            throw 'Automatic self-updater MUST NEVER install prereleases.'
+              $helper.Contains('$queryArgs += ''--pre''') -or
+              $helper.Contains('$upgradeArgs += ''--pre''')) {
+            throw 'Automatic self-updater may never install prereleases.'
           }
           $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
-          if (-not $installer.Contains('Set-ScheduledTask -TaskName $selfUpdateTaskName') -or
-              -not $installer.Contains('Stop-InstalledAgents') -or
-              -not $installer.Contains('maintenance.lock')) {
-            throw 'Stable installer is missing safe updater handoff or process protections.'
+          foreach ($required in @('Set-ScheduledTask -TaskName $selfUpdateTaskName',
+                                   'Stop-InstalledAgents', 'maintenance.lock')) {
+            if (-not $installer.Contains($required)) {
+              throw "Stable installer missing safety guard: $required"
+            }
           }
       - name: Run tests and build Windows package
         run: .\build.bat
