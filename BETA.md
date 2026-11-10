@@ -60,3 +60,20 @@ require or initiate a reboot, which the application cannot fully control.
   Windows Update / Chocolatey is still processing installers.
 - Runtime testing of concurrent readers and the Windows Update driver
   path is still required even after GitHub Actions tests succeed.
+
+## Beta 2.0.0-beta.5 — parallel maintenance and persistent warning
+
+Windows Update and Chocolatey are started independently when the warning expires. Windows Update can scan/download while Chocolatey performs upgrades. An OS-wide named semaphore serializes the actual Windows Update and Chocolatey installation phases to avoid MSI conflicts. Shutdown is permitted only after both running stages exit and the existing safety guards pass. If the user returns, the pending shutdown is cancelled; installers already running are allowed to finish.
+
+While maintenance is enabled, the interactive warning stays visible at 00:00 with a localized message that shutdown is waiting for Windows Update/Chocolatey. The Continue Working button and verified keyboard/mouse cancellation remain available. When maintenance is disabled, the original countdown behavior is retained. This is an initial status message, not an individual update-progress percentage.
+
+**Do not deploy a new beta on a machine actively updating:** Chocolatey installation of ShutdownApp restarts the service and may abandon a running child update process. Test a new beta only when the prior maintenance cycle has ended.
+
+PowerShell sample for beta.5 once the .nupkg is uploaded to the internal test feed:
+
+```powershell
+$repo = 'https://choco.cpto.ujep.cz/nuget/choco-internal/'
+choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.5 `
+  --source="$repo" `
+  --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30'"
+```
