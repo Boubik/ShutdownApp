@@ -4,6 +4,21 @@ using IdleShutdown.Shared;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("beta version appears in popup and strips commit metadata", () =>
+    {
+        Expect("v2.0.0-beta.4", VersionDisplay.Format(
+            "2.0.0-beta.4+g1a2b3c4",
+            new Version(2, 0, 0, 0)));
+        Expect("v2.0.0-rc.1", VersionDisplay.Format(
+            "2.0.0-rc.1",
+            new Version(2, 0, 0, 0)));
+        Expect("v2.0.0", VersionDisplay.Format(
+            "2.0.0",
+            new Version(2, 0, 0, 0)));
+        Expect("v1.3.4", VersionDisplay.Format(
+            null,
+            new Version(1, 3, 4, 0)));
+    }),
     ("interactive warning starts at the first configured boundary", () =>
     {
         Expect(false, IdleThreshold.IsReached(TimeSpan.FromSeconds(59), 1));
