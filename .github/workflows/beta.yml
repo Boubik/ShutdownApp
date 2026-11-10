@@ -1,0 +1,68 @@
+name: Beta build (2.0)
+
+on:
+  push:
+    branches:
+      - develop/2.0
+    tags:
+      - 'v2.0.0-beta.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: idle-shutdown-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Validate beta version
+        id: version
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          if ($v -notmatch '^2\.0\.0-beta\.[1-9][0-9]*$') {
+            throw "Invalid beta VERSION: $v"
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$v") {
+            throw "Tag must match VERSION (v$v)."
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "tag=v$v" >> $env:GITHUB_OUTPUT
+      - name: Run tests and build Chocolatey package
+        run: .\build.bat
+      - name: Check package version
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          $p = 'dist\package\idle-shutdown.nupkg'
+          if (-not (Test-Path $p)) { throw 'Chocolatey package is missing' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $p))
+          try {
+            $entry = $zip.Entries | Where-Object FullName -eq 'idle-shutdown.nuspec' | Select-Object -First 1
+            if ($null -eq $entry) { throw 'Missing nuspec' }
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { [xml]$doc = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if ($doc.package.metadata.version -ne $env:EXPECTED) { throw 'Incorrect package version' }
+          } finally { $zip.Dispose() }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: idle-shutdown-${{ steps.version.outputs.version }}-${{ github.run_number }}
+          path: dist/package/idle-shutdown.nupkg
+          retention-days: 30
+      - name: Publish tagged beta as GitHub prerelease
+        if: startsWith(github.ref, 'refs/tags/v2.0.0-beta.')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create $env:TAG 'dist/package/idle-shutdown.nupkg' --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Idle Shutdown $env:TAG (beta)" --notes "Pre-release for controlled testing. NOT for production." --prerelease --latest=false
