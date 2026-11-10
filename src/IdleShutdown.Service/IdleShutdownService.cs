@@ -14,6 +14,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
     private readonly object _sync = new();
     private readonly object _activitySync = new();
+    private readonly IdleMaintenance _maintenance = new();
     private readonly Dictionary<int, DateTime> _lockedSince = new();
     private readonly Dictionary<int, DateTime?> _lockedSessionLastInput = new();
     private readonly Dictionary<int, DateTime> _lockedDiagnosticLoggedAt = new();
@@ -209,6 +210,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
         if (cancelPendingShutdown)
         {
+            _maintenance.Cancel("session activity or session change");
             MachineActivitySignal.Pulse();
             MachineWarningSignal.Clear();
 
@@ -1254,6 +1256,8 @@ internal sealed class IdleShutdownService : ServiceBase
 
             _pendingShutdown = null;
         }
+
+        _maintenance.Cancel(cancellationReason);
     }
 
     private bool ProcessPendingShutdown(
@@ -1269,6 +1273,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
         if (pending is null)
         {
+            _maintenance.ResetIfSafe();
             return _shutdownCommandIssued;
         }
 
@@ -1316,6 +1321,18 @@ internal sealed class IdleShutdownService : ServiceBase
         if (DateTime.UtcNow < pending.ExecuteAtUtc)
         {
             return true;
+        }
+
+        // The countdown is the earliest shutdown time, never a deadline
+        // for interrupting a maintenance process.
+        if (config.MaintenanceEnabled)
+        {
+            _maintenance.CheckOverrun();
+            _maintenance.BeginIfNeeded(config);
+            if (!_maintenance.Completed)
+            {
+                return true;
+            }
         }
 
         if (ShouldDeferForSystemActivity(pending.Reason, config))
