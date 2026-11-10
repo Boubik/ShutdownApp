@@ -217,7 +217,9 @@ internal sealed class AgentApplicationContext : ApplicationContext
             using var dialog =
                 new WarningForm(
                     visibleWarningSeconds,
-                    inputTickAtStart);
+                    inputTickAtStart,
+                    keepOpenForMaintenance: config.MaintenanceEnabled && !config.DryRun,
+                    sendShutdownRequest: SendShutdownRequest);
 
             var result =
                 dialog.ShowDialog();

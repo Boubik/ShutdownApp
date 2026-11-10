@@ -10,6 +10,8 @@ internal sealed record UiStrings(
     string Hint,
     string ContinueButton,
     string UrgentStatus,
+    string MaintenanceCountdownCaption,
+    string MaintenanceStatus,
     string ServiceContactFailed,
     string ComputerWillNotShutdown,
     string TechnicalDetail);
@@ -25,6 +27,9 @@ internal static class LocalizedText
         Hint: "Move the mouse, press any key, or use the button below.",
         ContinueButton: "Continue working",
         UrgentStatus: "Shutdown is imminent. Move the mouse or use the button to continue.",
+        MaintenanceCountdownCaption: "Shutting down after updates finish",
+        MaintenanceStatus: "Waiting for Windows Update and Chocolatey to finish. " +
+                           "You can still cancel the shutdown.",
         ServiceContactFailed: "The automatic shutdown service could not be contacted.",
         ComputerWillNotShutdown: "The computer will not be shut down.",
         TechnicalDetail: "Technical detail");
@@ -38,6 +43,9 @@ internal static class LocalizedText
         Hint: "Pohněte myší, stiskněte libovolnou klávesu nebo použijte tlačítko níže.",
         ContinueButton: "Pokračovat v práci",
         UrgentStatus: "Vypnutí je bezprostřední. Pohněte myší nebo pokračujte tlačítkem.",
+        MaintenanceCountdownCaption: "Vypnutí po dokončení aktualizací",
+        MaintenanceStatus: "Čeká se na dokončení aktualizací Windows a Chocolatey. " +
+                           "Vypnutí lze stále zrušit.",
         ServiceContactFailed: "Nepodařilo se kontaktovat službu automatického vypnutí.",
         ComputerWillNotShutdown: "Počítač nebude vypnut.",
         TechnicalDetail: "Technický detail");
@@ -51,6 +59,9 @@ internal static class LocalizedText
         Hint: "Bewegen Sie die Maus, drücken Sie eine Taste oder verwenden Sie die Schaltfläche unten.",
         ContinueButton: "Weiterarbeiten",
         UrgentStatus: "Das Herunterfahren steht unmittelbar bevor. Bewegen Sie die Maus oder verwenden Sie die Schaltfläche.",
+        MaintenanceCountdownCaption: "Herunterfahren nach den Updates",
+        MaintenanceStatus: "Windows Update und Chocolatey werden abgeschlossen. " +
+                           "Das Herunterfahren kann noch abgebrochen werden.",
         ServiceContactFailed: "Der Dienst für das automatische Herunterfahren konnte nicht erreicht werden.",
         ComputerWillNotShutdown: "Der Computer wird nicht heruntergefahren.",
         TechnicalDetail: "Technisches Detail");
@@ -64,6 +75,9 @@ internal static class LocalizedText
         Hint: "Mueva el ratón, pulse cualquier tecla o use el botón de abajo.",
         ContinueButton: "Continuar trabajando",
         UrgentStatus: "El apagado es inminente. Mueva el ratón o use el botón para continuar.",
+        MaintenanceCountdownCaption: "Apagado al terminar las actualizaciones",
+        MaintenanceStatus: "Esperando a Windows Update y Chocolatey. " +
+                           "Todavía puede cancelar el apagado.",
         ServiceContactFailed: "No se pudo contactar con el servicio de apagado automático.",
         ComputerWillNotShutdown: "El equipo no se apagará.",
         TechnicalDetail: "Detalle técnico");

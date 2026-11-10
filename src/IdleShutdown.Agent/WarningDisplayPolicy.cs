@@ -2,6 +2,11 @@ namespace IdleShutdown.AgentApp;
 
 internal static class WarningDisplayPolicy
 {
+    // With maintenance enabled, zero means the grace period ended—not that
+    // Windows Update / Chocolatey is complete or the shutdown is imminent.
+    public static bool ShouldRemainVisibleAtZero(bool maintenanceEnabled) =>
+        maintenanceEnabled;
+
     public static bool HasVerifiedLocalInput(
         uint? inputTickAtStart,
         uint? currentInputTick)

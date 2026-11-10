@@ -4,6 +4,12 @@ using IdleShutdown.Shared;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("maintenance keeps warning visible after countdown reaches zero", () =>
+    {
+        Expect(true, WarningDisplayPolicy.ShouldRemainVisibleAtZero(true));
+        Expect(false, WarningDisplayPolicy.ShouldRemainVisibleAtZero(false));
+    }),
+
     ("beta version appears in popup and strips commit metadata", () =>
     {
         Expect("v2.0.0-beta.4", VersionDisplay.Format(
