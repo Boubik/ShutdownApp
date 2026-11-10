@@ -8,16 +8,48 @@ $selfLockPath = Join-Path $dataDir 'selfupdate.lock'
 $maintenanceLockPath = Join-Path $dataDir 'maintenance.lock'
 $logPath = Join-Path $dataDir 'SelfUpdate.log'
 
+# Same retention policy as the primary service log:
+# 2 MiB active file, .1 and .2 archives (about 6 MiB total).
+$maxLogBytes = 2MB
+
 function Write-SelfUpdateLog {
     param([string]$Message)
     $line = '[{0}] [SELF-UPDATE] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), ($Message -replace '[\r\n]', ' ')
     try {
+        New-Item -Path $dataDir -ItemType Directory -Force | Out-Null
         $stream = [System.IO.FileStream]::new(
-            $logPath, [IO.FileMode]::Append, [IO.FileAccess]::Write,
+            $logPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite,
             ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
         try {
-            $writer = [IO.StreamWriter]::new($stream)
-            try { $writer.WriteLine($line) } finally { $writer.Dispose() }
+            $lineSize = [Text.Encoding]::UTF8.GetByteCount($line) + 2
+            if ($stream.Length + $lineSize -gt $maxLogBytes) {
+                try {
+                    if (Test-Path -LiteralPath "$logPath.2") {
+                        Remove-Item -LiteralPath "$logPath.2" -Force -ErrorAction Stop
+                    }
+                    if (Test-Path -LiteralPath "$logPath.1") {
+                        Move-Item -LiteralPath "$logPath.1" -Destination "$logPath.2" -ErrorAction Stop
+                    }
+                    $stream.Position = 0
+                    $archive = [IO.FileStream]::new(
+                        "$logPath.1", [IO.FileMode]::CreateNew,
+                        [IO.FileAccess]::Write, [IO.FileShare]::Read)
+                    try { $stream.CopyTo($archive) } finally { $archive.Dispose() }
+                    $stream.SetLength(0)
+                }
+                catch {
+                    # Do not let a reader holding an old archive interfere
+                    # with the updater. Bound the active log in this case.
+                    $stream.SetLength(0)
+                }
+            }
+            $stream.Position = $stream.Length
+            $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false))
+            try {
+                $writer.WriteLine($line)
+                $writer.Flush()
+            }
+            finally { $writer.Dispose() }
         }
         finally { $stream.Dispose() }
     }
@@ -179,7 +211,7 @@ try {
     $targetVersion = $null
     $currentVersion = $null
     foreach ($line in $output) {
-        if ($line -match '^idle-shutdown\|([^|]+)\|([^|]+)\|') {
+        if ($line -match '^idle-shutdown\|([^|]+)\|([^|]+)(?:\||$)') {
             $currentVersion = $Matches[1].Trim()
             $targetVersion = $Matches[2].Trim()
             break
