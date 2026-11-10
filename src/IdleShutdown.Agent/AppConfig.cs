@@ -18,6 +18,8 @@ internal sealed class AppConfig
     public int CheckIntervalSeconds { get; set; } = 5;
     public bool PauseWhenFullscreen { get; set; } = true;
     public bool DryRun { get; set; } = false;
+    // Optional in pre-2.0 config.json files.
+    public bool MaintenanceEnabled { get; set; } = false;
     public bool IsValid { get; private set; } = true;
 
     public static string BaseDirectory => Path.Combine(
