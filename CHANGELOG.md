@@ -7,6 +7,7 @@
 - Doplňuje chybějící nové položky z výchozích hodnot 2.0.2 (`MaintenanceEnabled`, `OptionalDriversEnabled`, `SelfUpdateEnabled` jsou `true`), ale zachovává všechna existující a výslovně zvolená nastavení.
 - Před migrací vytváří jednorázovou zálohu `config.json.pre-2.0.2.bak`, odmítá neplatný nebo novější konfigurační soubor a zachovává pokus o rollback při selhání instalace.
 - Přidává testy migrace 1.3.4/2.0.x, zachování administrátorských voleb, opakované migrace a odmítnutí downgrade.
+- Opravuje verzování pomocného SYSTEM skriptu: budoucí běhy samoaktualizace po upgradu používají pomocníka odpovídajícího právě instalované stabilní verzi.
 
 ## 2.0.1
 

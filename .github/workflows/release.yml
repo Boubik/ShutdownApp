@@ -130,7 +130,8 @@ jobs:
           $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
           foreach ($required in @('Set-ScheduledTask -TaskName $selfUpdateTaskName',
                                    'Stop-InstalledAgents', 'maintenance.lock',
-                                   'Merge-IdleShutdownConfiguration', 'config.json.pre-')) {
+                                   'Merge-IdleShutdownConfiguration', 'config.json.pre-',
+                                   'SelfUpdate-$helperVersion.ps1')) {
             if (-not $installer.Contains($required)) {
               throw "Stable installer missing safety guard: $required"
             }
