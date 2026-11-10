@@ -260,16 +260,61 @@ foreach ($removedParameter in @('LockedMinutes', 'NoUserMinutes')) {
     }
 }
 
-Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Stop-Service $serviceName -Force -ErrorAction SilentlyContinue
+# Stage the complete new payload before stopping the working installation.
+# This also prevents a half-upgraded directory if a copy later fails.
+$stageDir = Join-Path $env:ProgramFiles ('IdleShutdown.stage.' + [guid]::NewGuid().ToString('N'))
+$backupDir = Join-Path $env:ProgramFiles ('IdleShutdown.backup.' + [guid]::NewGuid().ToString('N'))
+$hadExistingInstall = Test-Path $installDir
+$previousConfig = if (Test-Path $configPath) { Get-Content $configPath -Raw } else { $null }
+$previousInventoryVersion = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -ErrorAction SilentlyContinue).DisplayVersion
+$previousTaskXml = $null
+$oldService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+$wasServiceRunning = $null -ne $oldService -and $oldService.Status -ne 'Stopped'
+$guard = $null
+$servicesTouched = $false
+$swapped = $false
 
-New-Item $installDir -ItemType Directory -Force | Out-Null
-New-Item $dataDir -ItemType Directory -Force | Out-Null
-Copy-Item (Join-Path $payloadDir 'Service\*') $installDir -Recurse -Force
-Copy-Item (Join-Path $payloadDir 'Agent\*') $installDir -Recurse -Force
+New-Item $stageDir -ItemType Directory -Force | Out-Null
+try {
+    Copy-Item (Join-Path $payloadDir 'Service\*') $stageDir -Recurse -Force -ErrorAction Stop
+    Copy-Item (Join-Path $payloadDir 'Agent\*') $stageDir -Recurse -Force -ErrorAction Stop
 
-$config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+    if (-not (Test-Path (Join-Path $stageDir 'IdleShutdown.Service.exe')) -or
+        -not (Test-Path (Join-Path $stageDir 'IdleShutdown.Agent.exe'))) {
+        throw 'Incomplete staged payload; refusing to stop the installed service.'
+    }
+
+    $guard = New-IdleUpdateGuard
+    Assert-NoActiveIdleMaintenance
+
+    # Save the previously registered task so we can restore it on failure.
+    $oldTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($null -ne $oldTask) {
+        $previousTaskXml = Export-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    }
+
+    $servicesTouched = $true
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Stop-InstalledAgents
+
+    $currentService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($null -ne $currentService -and $currentService.Status -ne 'Stopped') {
+        Stop-Service -Name $serviceName -Force -ErrorAction Stop
+        (Get-Service -Name $serviceName).WaitForStatus(
+            [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+            [TimeSpan]::FromSeconds(30))
+    }
+
+    # Swap directories only after the agent and service have really exited.
+    if ($hadExistingInstall) {
+        Move-Item -LiteralPath $installDir -Destination $backupDir -ErrorAction Stop
+    }
+    Move-Item -LiteralPath $stageDir -Destination $installDir -ErrorAction Stop
+    $swapped = $true
+
+    $config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+
 
 if (-not (Test-Path $logPath)) {
     New-Item $logPath -ItemType File -Force | Out-Null
@@ -350,3 +395,64 @@ if (Get-Process 'explorer' -ErrorAction SilentlyContinue) {
 
 Write-Host "Idle Shutdown installed. Configuration: $configPath"
 Write-Host "Log: $logPath"
+
+    # A successful upgrade can now discard the previous application binaries.
+    if (Test-Path $backupDir) {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+catch {
+    $failure = $_
+    Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
+
+    if ($servicesTouched) {
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+        try { Stop-InstalledAgents } catch { Write-Warning $_.Exception.Message }
+
+        # Preserve the previous version if the directory swap has started.
+        if ($swapped -or (Test-Path $backupDir)) {
+            if (Test-Path $installDir) {
+                try {
+                    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning ('Could not remove failed installation: ' + $_.Exception.Message)
+                }
+            }
+            if (Test-Path $backupDir) {
+                Move-Item -LiteralPath $backupDir -Destination $installDir -ErrorAction Stop
+                Write-Warning 'Restored previous IdleShutdown application binaries.'
+            }
+        }
+
+        if ($null -ne $previousConfig) {
+            $previousConfig | Set-Content -LiteralPath $configPath -Encoding UTF8
+        }
+        if ($previousTaskXml) {
+            try {
+                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force -ErrorAction Stop | Out-Null
+            }
+            catch { Write-Warning ('Could not restore agent task: ' + $_.Exception.Message) }
+        }
+        if ($hadExistingInstall -and $wasServiceRunning) {
+            try { Start-Service -Name $serviceName -ErrorAction Stop }
+            catch { Write-Warning ('Could not restart previous service: ' + $_.Exception.Message) }
+        }
+        if ($previousInventoryVersion) {
+            try {
+                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -Name 'DisplayVersion' -Value $previousInventoryVersion -ErrorAction Stop
+            }
+            catch { Write-Warning ('Could not restore installed version registry value: ' + $_.Exception.Message) }
+        }
+    }
+    throw $failure
+}
+finally {
+    if ($guard) { $guard.Dispose() }
+    if (Test-Path $stageDir) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
