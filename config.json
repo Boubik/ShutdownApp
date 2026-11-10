@@ -1,4 +1,5 @@
 {
+  "ConfigVersion": "2.0.2",
   "IdleMinutes": 90,
   "WarningSeconds": 300,
   "CheckIntervalSeconds": 5,

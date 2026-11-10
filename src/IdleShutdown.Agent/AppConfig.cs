@@ -13,6 +13,9 @@ internal sealed class AppConfig
         nameof(DryRun)
     ];
 
+    // Optional for legacy configs; Chocolatey upgrades migrate this marker.
+    public string? ConfigVersion { get; set; }
+
     public int IdleMinutes { get; set; } = 90;
     public int WarningSeconds { get; set; } = 300;
     public int CheckIntervalSeconds { get; set; } = 5;

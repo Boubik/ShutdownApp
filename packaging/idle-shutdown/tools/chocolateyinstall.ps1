@@ -190,43 +190,38 @@ catch {
     throw "Packaged default configuration is invalid: $($_.Exception.Message)"
 }
 
-$config = [ordered]@{}
-foreach ($name in @(
-    'IdleMinutes',
-    'WarningSeconds',
-    'CheckIntervalSeconds',
-    'PauseWhenFullscreen',
-    'DryRun',
-    'MaintenanceEnabled',
-    'WindowsUpdateEnabled',
-    'DriverUpdatesEnabled',
-    'OptionalDriversEnabled',
-    'ChocolateyEnabled',
-    'ChocolateySource',
-    'MaintenanceMaxMinutes',
-    'SelfUpdateEnabled'
-)) {
-    $property = $defaults.PSObject.Properties[$name]
-    if ($null -eq $property) {
-        throw "Packaged default configuration is missing $name."
-    }
-
-    $config[$name] = $property.Value
+# ConfigVersion always tracks the installed package. Configurations from
+# 1.3.4, 2.0.0 and 2.0.1 (without a version) migrate transparently.
+$targetConfigVersion = [string]$env:ChocolateyPackageVersion
+$migrationScript = Join-Path $toolsDir 'config-migrate.ps1'
+if (-not (Test-Path -LiteralPath $migrationScript)) {
+    throw 'Chocolatey package is missing config-migrate.ps1.'
 }
+. $migrationScript
 
 $resetConfig = $parameters.ContainsKey('ResetConfig')
-if ((Test-Path $configPath) -and -not $resetConfig) {
+$existingConfig = $null
+$configMigrationNeeded = $false
+if ((Test-Path -LiteralPath $configPath) -and -not $resetConfig) {
     try {
-        $existingConfig = Get-Content $configPath -Raw | ConvertFrom-Json
-        foreach ($name in @($config.Keys)) {
-            $property = $existingConfig.PSObject.Properties[$name]
-            if ($null -ne $property) {
-                $config[$name] = $property.Value
-            }
-        }
+        $existingConfig = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     }
     catch {
-        throw "Existing configuration is invalid: $($_.Exception.Message)"
+        throw "Existing configuration is invalid and was NOT overwritten: $($_.Exception.Message)"
+    }
+}
+
+$config = Merge-IdleShutdownConfiguration -Defaults $defaults -Existing $existingConfig -TargetVersion $targetConfigVersion -ResetConfig:$resetConfig
+
+if ($null -ne $existingConfig) {
+    $previousVersion = $existingConfig.PSObject.Properties['ConfigVersion']
+    if ($null -eq $previousVersion -or [string]$previousVersion.Value -ne $targetConfigVersion) {
+        $configMigrationNeeded = $true
+    }
+    foreach ($key in @($config.Keys)) {
+        if ($null -eq $existingConfig.PSObject.Properties[$key]) {
+            $configMigrationNeeded = $true
+        }
     }
 }
 
@@ -321,7 +316,32 @@ try {
     Move-Item -LiteralPath $stageDir -Destination $installDir -ErrorAction Stop
     $swapped = $true
 
-    $config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+    if ($configMigrationNeeded -and (Test-Path -LiteralPath $configPath)) {
+        $configBackupPath = "$configPath.pre-$targetConfigVersion.bak"
+        if (-not (Test-Path -LiteralPath $configBackupPath)) {
+            Copy-Item -LiteralPath $configPath -Destination $configBackupPath -ErrorAction Stop
+            Write-Host "Backed up previous configuration: $configBackupPath"
+        }
+        Write-Host "Migrating config.json to ConfigVersion $targetConfigVersion (existing settings preserved)."
+    }
+
+    # Write a complete new config first, then replace the previous file
+    # atomically on Windows. Rollback still restores the old config on error.
+    $configTempPath = Join-Path $dataDir ("config.json.new." + [guid]::NewGuid().ToString('N'))
+    try {
+        $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configTempPath -Encoding UTF8 -ErrorAction Stop
+        if (Test-Path -LiteralPath $configPath) {
+            [IO.File]::Replace($configTempPath, $configPath, $null)
+        }
+        else {
+            Move-Item -LiteralPath $configTempPath -Destination $configPath -ErrorAction Stop
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $configTempPath) {
+            Remove-Item -LiteralPath $configTempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 
 
 if (-not (Test-Path $logPath)) {

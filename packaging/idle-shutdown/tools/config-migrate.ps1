@@ -43,7 +43,8 @@ function Merge-IdleShutdownConfiguration {
             if ($oldVersion -notmatch '^[0-9]+[.][0-9]+[.][0-9]+(?:-[0-9A-Za-z.-]+)?$') {
                 throw "Existing ConfigVersion '$oldVersion' is invalid."
             }
-            if ([version]$oldVersion.Split('-')[0] -gt [version]$TargetVersion) {
+            $oldBaseVersion = $oldVersion.Split('-')[0]
+            if ([version]$oldBaseVersion -gt [version]$TargetVersion) {
                 throw "Refusing to downgrade newer config '$oldVersion' to '$TargetVersion'."
             }
         }
@@ -56,5 +57,5 @@ function Merge-IdleShutdownConfiguration {
             }
         }
     }
-    return $config
+    return ,$config
 }
