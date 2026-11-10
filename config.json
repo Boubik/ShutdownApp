@@ -4,12 +4,12 @@
   "CheckIntervalSeconds": 5,
   "PauseWhenFullscreen": true,
   "DryRun": false,
-  "MaintenanceEnabled": false,
+  "MaintenanceEnabled": true,
   "WindowsUpdateEnabled": true,
   "DriverUpdatesEnabled": true,
-  "OptionalDriversEnabled": false,
+  "OptionalDriversEnabled": true,
   "ChocolateyEnabled": true,
   "ChocolateySource": null,
   "MaintenanceMaxMinutes": 120,
-  "SelfUpdateEnabled": false
+  "SelfUpdateEnabled": true
 }

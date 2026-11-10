@@ -36,14 +36,14 @@ Výchozí produkční konfigurace:
   "CheckIntervalSeconds": 5,
   "PauseWhenFullscreen": true,
   "DryRun": false,
-  "MaintenanceEnabled": false,
+  "MaintenanceEnabled": true,
   "WindowsUpdateEnabled": true,
   "DriverUpdatesEnabled": true,
-  "OptionalDriversEnabled": false,
+  "OptionalDriversEnabled": true,
   "ChocolateyEnabled": true,
   "ChocolateySource": null,
   "MaintenanceMaxMinutes": 120,
-  "SelfUpdateEnabled": false
+  "SelfUpdateEnabled": true
 }
 ```
 
@@ -72,9 +72,11 @@ Samostatný automatický aktualizátor zapisuje do
 
 ## Aktualizace systému a aplikací
 
+Od verze **2.0.1** jsou na nových instalacích `MaintenanceEnabled`, `OptionalDriversEnabled` a `SelfUpdateEnabled` ve výchozím stavu **`true`**. Stávající `config.json` se při upgradu **nepřepisuje**: pokud má některý z přepínačů výslovně `false`, zůstane `false`. Změnu může správce provést parametrem instalace, ruční úpravou konfigurace nebo pomocí `/ResetConfig` (ten ale resetuje i ostatní hodnoty).
+
 Při `MaintenanceEnabled: true` se ihned se začátkem upozornění spustí:
 
-- **Windows Update** – aktualizace systému a podle konfigurace ovladače; volitelné ovladače jsou standardně vypnuté. Aktualizace vyžadující interakci uživatele se přeskočí.
+- **Windows Update** – aktualizace systému a podle konfigurace ovladače; volitelné ovladače jsou od verze 2.0.1 ve výchozím stavu povolené. Aktualizace vyžadující interakci uživatele se přeskočí. Aktualizace vyžadující interakci uživatele se přeskočí.
 - **Chocolatey** – `choco upgrade all` z konfigurací zvoleného zdroje. Balíček `idle-shutdown` je z tohoto běhu úmyslně vynechán, aby služba nepřepisovala sama sebe během instalací.
 
 Po dosažení `MaintenanceMaxMinutes` se přestanou zahajovat další části
@@ -85,7 +87,7 @@ použije nakonfigurované zdroje v Chocolatey.
 
 ### Bezpečná samoaktualizace Idle Shutdown
 
-`SelfUpdateEnabled: true` povolí **oddělenou naplánovanou úlohu pod SYSTEM**
+`SelfUpdateEnabled: true` povolí **oddělenou naplánovanou úlohu pod SYSTEM** (u nových instalací od verze 2.0.1 je zapnuta standardně)
 s názvem `Idle Shutdown Self Update`. Ta kontroluje novější vydání při
 startu Windows a denně ve **3:00**. Kontrolu přeskočí, pokud je někdo
 přihlášen (včetně zamčené nebo odpojené RDP relace), probíhají aktualizace
@@ -194,7 +196,7 @@ Pro testovací prostředí s vlastním repozitářem a krátkým odpočtem
 
 ```powershell
 $repo = "https://choco.cpto.ujep.cz/nuget/choco-internal/"
-choco upgrade idle-shutdown -y --version=2.0.0 --source="$repo" `
+choco upgrade idle-shutdown -y --version=2.0.1 --source="$repo" `
   --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:true /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30 /SelfUpdateEnabled:true'"
 ```
 

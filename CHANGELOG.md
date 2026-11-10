@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+- U **nových instalací** zapíná ve výchozí konfiguraci `MaintenanceEnabled: true` (automatická údržba Windows Update a Chocolatey).
+- U nových instalací nastavuje `OptionalDriversEnabled: true` (volitelné aktualizace ovladačů; aktualizace vyžadující vstup uživatele se nadále přeskočí).
+- U nových instalací nastavuje `SelfUpdateEnabled: true` (samostatná SYSTEM úloha pro samoaktualizace aplikace; **výhradně stabilní vydání**).
+- Zachovává stávající `config.json` při upgradu z `2.0.0` nebo beta verzí: explicitně vypnuté přepínače automaticky nezapíná. Původní hodnoty lze přepsat parametry Chocolatey nebo vědomě resetovat pomocí `/ResetConfig`.
+- Nemění mechanismus aktualizací ani časování zavedené ve `2.0.0`.
+
 ## 2.0.0
 
 Stabilní vydání navazuje přímo na otestovanou řadu `2.0.0-beta.1` až `2.0.0-beta.8`.

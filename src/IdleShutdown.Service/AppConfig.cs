@@ -20,15 +20,15 @@ internal sealed class AppConfig
     public bool DryRun { get; set; } = false;
 
     // Optional for backwards compatibility with 1.x configurations.
-    public bool MaintenanceEnabled { get; set; } = false;
+    public bool MaintenanceEnabled { get; set; } = true;
     public bool WindowsUpdateEnabled { get; set; } = true;
     public bool DriverUpdatesEnabled { get; set; } = true;
-    public bool OptionalDriversEnabled { get; set; } = false;
+    public bool OptionalDriversEnabled { get; set; } = true;
     public bool ChocolateyEnabled { get; set; } = true;
     public string? ChocolateySource { get; set; }
     public int MaintenanceMaxMinutes { get; set; } = 120;
-    // Separate SYSTEM task; defaults disabled to preserve 1.x deployments.
-    public bool SelfUpdateEnabled { get; set; } = false;
+    // Separate SYSTEM task; new installations auto-update to STABLE releases only.
+    public bool SelfUpdateEnabled { get; set; } = true;
     public bool IsValid { get; private set; } = true;
     public string? LoadError { get; private set; }
 

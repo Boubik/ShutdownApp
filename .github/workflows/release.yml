@@ -87,6 +87,25 @@ jobs:
               throw "PowerShell script has a syntax error: $file"
             }
           }
+          if ($version -eq '2.0.1') {
+            # Release-specific regression: the packaged defaults must be on.
+            $defaults = Get-Content 'config.json' -Raw | ConvertFrom-Json
+            foreach ($option in @('MaintenanceEnabled', 'OptionalDriversEnabled', 'SelfUpdateEnabled')) {
+              if ($defaults.$option -ne $true) {
+                throw "2.0.1 must enable $option for new installs."
+              }
+            }
+            $serviceConfig = Get-Content 'src/IdleShutdown.Service/AppConfig.cs' -Raw
+            $agentConfig = Get-Content 'src/IdleShutdown.Agent/AppConfig.cs' -Raw
+            foreach ($option in @('MaintenanceEnabled', 'OptionalDriversEnabled', 'SelfUpdateEnabled')) {
+              if (-not $serviceConfig.Contains("bool $option { get; set; } = true;")) {
+                throw "Service default mismatch: $option"
+              }
+            }
+            if (-not $agentConfig.Contains('bool MaintenanceEnabled { get; set; } = true;')) {
+              throw 'Agent maintenance default mismatch.'
+            }
+          }
           $helper = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
           foreach ($required in @('--version=$targetVersion',
                                    'Skipped non-stable upgrade target',
