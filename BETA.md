@@ -77,3 +77,40 @@ choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.5 `
   --source="$repo" `
   --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30'"
 ```
+
+
+## Beta 2.0.0-beta.6 — safe self-upgrade and uninstall
+
+The automatic idle-maintenance Chocolatey runner continues to use
+\`choco upgrade all --except=idle-shutdown\`. Self-updating the binaries of
+the service currently orchestrating updates is unsafe. Upgrade IdleShutdown
+as a separate Chocolatey operation (for example through Tactical RMM), not
+from its own maintenance job.
+
+Safety protections:
+- The service exclusively holds \`C:\ProgramData\IdleShutdown\maintenance.lock\`
+  while a maintenance cycle is running. Chocolatey install/uninstall attempts
+  acquire the same lock; if it is unavailable they fail before stopping the
+  service or changing installed binaries. Retry later.
+- The installer checks for legacy beta 2.0 child updater processes even when
+  the previous version has no maintenance lock yet.
+- A new payload is fully staged and checked before touching the installed files.
+- Existing scheduled tasks are stopped/unregistered, then **all running
+  IdleShutdown.Agent.exe processes belonging to the installed path are stopped**
+  before stopping the service and replacing binaries.
+- Existing application binaries are moved to a backup directory before the
+  staged payload is swapped into place.
+- Installation failure attempts to restore binaries, previous config, task,
+  service and inventory version; logs remain in ProgramData.
+- A successful install starts the updated Windows service and agent task again.
+- The uninstall script also refuses removal during active maintenance and
+  closes running agents before deleting files.
+
+**Limitations / mandatory manual tests:** GitHub Actions builds and PowerShell
+syntax checks do not demonstrate that Windows file locks, RDP-session agents,
+service stop/start and rollback operate correctly on all target machines.
+Test upgrade between two betas with an active agent, RDP sessions and idle
+maintenance in a lab before broad deployment. An external administrator who
+force-kills the service, a power loss or an installer that schedules its own
+reboot can still interrupt ongoing software changes. The service does not
+perform hot self-replacement.
