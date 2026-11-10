@@ -1024,6 +1024,7 @@ internal sealed class IdleShutdownService : ServiceBase
             Log.Write(
                 $"Interactive warning started; beginning maintenance immediately " +
                 $"while countdown runs until {deadlineUtc:O}.");
+            _maintenance.ResetCancelledIfSafe();
             _maintenance.BeginIfNeeded(config);
         }
 
@@ -1249,6 +1250,7 @@ internal sealed class IdleShutdownService : ServiceBase
                     return;
             }
             Log.Write("Silent warning started; beginning maintenance during countdown.");
+            _maintenance.ResetCancelledIfSafe();
             _maintenance.BeginIfNeeded(config);
         }
     }
