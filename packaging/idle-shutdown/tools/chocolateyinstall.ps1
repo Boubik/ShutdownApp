@@ -317,7 +317,7 @@ try {
     $swapped = $true
 
     if ($configMigrationNeeded -and (Test-Path -LiteralPath $configPath)) {
-        $configBackupPath = "$configPath.pre-$targetConfigVersion.bak"
+        $configBackupPath = Join-Path $dataDir ("config.json.pre-" + $targetConfigVersion + ".bak")
         if (-not (Test-Path -LiteralPath $configBackupPath)) {
             Copy-Item -LiteralPath $configPath -Destination $configBackupPath -ErrorAction Stop
             Write-Host "Backed up previous configuration: $configBackupPath"
