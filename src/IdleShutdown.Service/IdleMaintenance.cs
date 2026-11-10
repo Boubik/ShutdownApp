@@ -13,6 +13,7 @@ internal sealed class IdleMaintenance
     private bool _completed;
     private bool _warnedOverrun;
     private bool _failed;
+    private bool _timedOut;
     private DateTime _startedUtc;
     private AppConfig? _settings;
 
@@ -41,6 +42,7 @@ internal sealed class IdleMaintenance
             _warnedOverrun = false;
             _completed = false;
             _failed = false;
+            _timedOut = false;
             _startedUtc = DateTime.UtcNow;
             _settings = config;
             _task = Task.Run(RunAsync);
@@ -56,6 +58,7 @@ internal sealed class IdleMaintenance
             if (!_cancelRequested)
                 Log.Write($"Maintenance: cancellation requested ({reason}); active installer will finish.");
             _cancelRequested = true;
+            _timedOut = false;
             _completed = false;
             // Keep the current Task reference until it exits, to prevent overlap.
         }
@@ -70,6 +73,7 @@ internal sealed class IdleMaintenance
             _completed = false;
             _cancelRequested = false;
             _failed = false;
+            _timedOut = false;
             _settings = null;
         }
     }
@@ -83,6 +87,7 @@ internal sealed class IdleMaintenance
             if (DateTime.UtcNow - _startedUtc <= TimeSpan.FromMinutes(_settings.MaintenanceMaxMinutes))
                 return;
             _warnedOverrun = true;
+            _timedOut = true;
             _cancelRequested = true;
             Log.Write("Maintenance: maximum duration exceeded; no more stages will start. Waiting for active installer (never force-kill).");
         }
@@ -111,13 +116,13 @@ internal sealed class IdleMaintenance
             bool success;
             lock (_sync)
             {
-                _completed = !_cancelRequested;
-                _failed = _cancelRequested;
+                _completed = !_cancelRequested || _timedOut;
+                _failed = !_completed;
                 success = _completed;
             }
             Log.Write(success
-                ? "Maintenance: cycle completed; shutdown may proceed after final safety checks."
-                : "Maintenance: cancelled or timed out; automatic shutdown is not authorized.");
+                ? "Maintenance: cycle finished; shutdown may proceed after final safety checks."
+                : "Maintenance: cancelled by activity; automatic shutdown is not authorized.");
         }
         catch (Exception ex)
         {
