@@ -11,7 +11,7 @@ function Merge-IdleShutdownConfiguration {
     if ($TargetVersion -notmatch '^[0-9]+[.][0-9]+[.][0-9]+$') {
         throw "Invalid stable application version '$TargetVersion'."
     }
-    if ($Defaults -isnot [pscustomobject]) {
+    if ($Defaults.GetType().FullName -ne 'System.Management.Automation.PSCustomObject') {
         throw 'Packaged defaults must be a JSON object.'
     }
     $defaultVersion = $Defaults.PSObject.Properties['ConfigVersion']
@@ -34,7 +34,7 @@ function Merge-IdleShutdownConfiguration {
         $config[$name] = $property.Value
     }
     if (-not $ResetConfig -and $null -ne $Existing) {
-        if ($Existing -isnot [pscustomobject]) {
+        if ($Existing.GetType().FullName -ne 'System.Management.Automation.PSCustomObject') {
             throw 'Existing config.json must contain a JSON object.'
         }
         $oldVersionProperty = $Existing.PSObject.Properties['ConfigVersion']
