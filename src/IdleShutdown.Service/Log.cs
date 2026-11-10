@@ -2,6 +2,18 @@ namespace IdleShutdown.ServiceApp;
 
 internal static class Log
 {
+#if PRERELEASE_VERBOSE
+    public const bool DebugEnabled = true;
+#else
+    public const bool DebugEnabled = false;
+#endif
+
+    public static void Debug(string message)
+    {
+        if (DebugEnabled)
+            Write("DEBUG: " + message);
+    }
+
     private const long MaxLogBytes = 2L * 1024 * 1024;
     private const int ArchiveCount = 2;
     private static readonly object Sync = new();

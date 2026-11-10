@@ -2,6 +2,18 @@ namespace IdleShutdown.AgentApp;
 
 internal static class Log
 {
+#if PRERELEASE_VERBOSE
+    public const bool DebugEnabled = true;
+#else
+    public const bool DebugEnabled = false;
+#endif
+
+    public static void Debug(string message)
+    {
+        if (DebugEnabled)
+            Write("DEBUG: " + message);
+    }
+
     private static readonly object Sync = new();
 
     public static void Write(string message)

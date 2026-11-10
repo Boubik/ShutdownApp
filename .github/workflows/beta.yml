@@ -35,6 +35,12 @@ jobs:
           }
           "version=$v" >> $env:GITHUB_OUTPUT
           "tag=v$v" >> $env:GITHUB_OUTPUT
+      - name: Assert verbose prerelease compilation mode
+        run: |
+          $defines = dotnet msbuild 'src/IdleShutdown.Service/IdleShutdown.Service.csproj' -getProperty:DefineConstants
+          if ($LASTEXITCODE -ne 0 -or $defines -notmatch 'PRERELEASE_VERBOSE') {
+            throw "Pre-release builds MUST compile with PRERELEASE_VERBOSE (got $defines)."
+          }
       - name: Run tests and build Chocolatey package
         run: .\build.bat
       - name: Check package version

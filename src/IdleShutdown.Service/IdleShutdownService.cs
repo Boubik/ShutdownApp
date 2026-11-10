@@ -71,6 +71,10 @@ internal sealed class IdleShutdownService : ServiceBase
         Log.Write(
             $"Service started; state check interval is " +
             $"{checkInterval.TotalSeconds:F0} second(s).");
+        Log.Write($"Logging mode: {(Log.DebugEnabled ? "VERBOSE PRERELEASE" : "STANDARD STABLE")}; " +
+            $"DryRun={config.DryRun}; MaintenanceEnabled={config.MaintenanceEnabled}; " +
+            $"WindowsUpdate={config.WindowsUpdateEnabled}; Drivers={config.DriverUpdatesEnabled}; " +
+            $"OptionalDrivers={config.OptionalDriversEnabled}; Chocolatey={config.ChocolateyEnabled}.");
 
         if (!config.IsValid)
         {
