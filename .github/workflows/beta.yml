@@ -52,7 +52,7 @@ jobs:
             $parseErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $file).Path, [ref]$tokens, [ref]$parseErrors)
-            if (@($parseErrors).Count -gt 0) {
+            if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
               foreach ($errorItem in $parseErrors) {
                 Write-Host ("{0}:{1}: {2}" -f $file, $errorItem.Extent.StartLineNumber, $errorItem.Message)
               }
