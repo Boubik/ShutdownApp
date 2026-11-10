@@ -14,6 +14,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
     private readonly object _sync = new();
     private readonly object _activitySync = new();
+    private readonly IdleMaintenance _maintenance = new();
     private readonly Dictionary<int, DateTime> _lockedSince = new();
     private readonly Dictionary<int, DateTime?> _lockedSessionLastInput = new();
     private readonly Dictionary<int, DateTime> _lockedDiagnosticLoggedAt = new();
@@ -70,6 +71,10 @@ internal sealed class IdleShutdownService : ServiceBase
         Log.Write(
             $"Service started; state check interval is " +
             $"{checkInterval.TotalSeconds:F0} second(s).");
+        Log.Write($"Logging mode: {(Log.DebugEnabled ? "VERBOSE PRERELEASE" : "STANDARD STABLE")}; " +
+            $"DryRun={config.DryRun}; MaintenanceEnabled={config.MaintenanceEnabled}; " +
+            $"WindowsUpdate={config.WindowsUpdateEnabled}; Drivers={config.DriverUpdatesEnabled}; " +
+            $"OptionalDrivers={config.OptionalDriversEnabled}; Chocolatey={config.ChocolateyEnabled}.");
 
         if (!config.IsValid)
         {
@@ -209,6 +214,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
         if (cancelPendingShutdown)
         {
+            _maintenance.Cancel("session activity or session change");
             MachineActivitySignal.Pulse();
             MachineWarningSignal.Clear();
 
@@ -965,6 +971,13 @@ internal sealed class IdleShutdownService : ServiceBase
             return false;
         }
 
+        var config = AppConfig.Load();
+        var prestart = config.IsValid &&
+            WarningMaintenancePolicy.StartDuringWarning(
+                config.MaintenanceEnabled, config.DryRun) &&
+            !HasActiveInteractiveSession(config);
+        var startMaintenance = false;
+
         lock (_sync)
         {
             _warningDeadlines[sessionId] = deadlineUtc;
@@ -984,6 +997,35 @@ internal sealed class IdleShutdownService : ServiceBase
 
             MachineWarningSignal.SetDeadline(
                 _warningDeadlines.Values.Max());
+
+            if (prestart && _pendingShutdown is null)
+            {
+                // Reserve the deadline immediately so a successful early
+                // maintenance run cannot be reset before the countdown ends.
+                // The warning is NOT permission to shut down: the agent must
+                // later send SHUTDOWN_IDLE to confirm its expiry.
+                _pendingShutdown = new PendingShutdown(
+                    PendingShutdownKind.Interactive,
+                    null,
+                    "interactive idle timeout",
+                    deadlineUtc,
+                    Confirmed: false);
+                startMaintenance = true;
+            }
+            else if (prestart &&
+                     _pendingShutdown is { Kind: PendingShutdownKind.Interactive })
+            {
+                startMaintenance = true;
+            }
+        }
+
+        if (startMaintenance)
+        {
+            Log.Write(
+                $"Interactive warning started; beginning maintenance immediately " +
+                $"while countdown runs until {deadlineUtc:O}.");
+            _maintenance.ResetCancelledIfSafe();
+            _maintenance.BeginIfNeeded(config);
         }
 
         return true;
@@ -1197,6 +1239,20 @@ internal sealed class IdleShutdownService : ServiceBase
                 $"Post-schedule state check failed: " +
                 $"{ex.GetType().Name}: {ex.Message}");
         }
+
+        // For locked/no-user cases there is no interactive warning window.
+        // Start maintenance when their silent grace period begins too.
+        if (config.MaintenanceEnabled)
+        {
+            lock (_sync)
+            {
+                if (_pendingShutdown is null)
+                    return;
+            }
+            Log.Write("Silent warning started; beginning maintenance during countdown.");
+            _maintenance.ResetCancelledIfSafe();
+            _maintenance.BeginIfNeeded(config);
+        }
     }
 
     private void CancelPendingShutdownIfUserBecameActive(
@@ -1254,6 +1310,8 @@ internal sealed class IdleShutdownService : ServiceBase
 
             _pendingShutdown = null;
         }
+
+        _maintenance.Cancel(cancellationReason);
     }
 
     private bool ProcessPendingShutdown(
@@ -1269,6 +1327,7 @@ internal sealed class IdleShutdownService : ServiceBase
 
         if (pending is null)
         {
+            _maintenance.ResetIfSafe();
             return _shutdownCommandIssued;
         }
 
@@ -1313,8 +1372,56 @@ internal sealed class IdleShutdownService : ServiceBase
             }
         }
 
+        // Maintenance begins with the warning and its watchdog must remain
+        // active even while the visible countdown still has time remaining.
+        if (config.MaintenanceEnabled)
+        {
+            // If a user cancelled an earlier warning while installers were
+            // finishing, retry only once the previous task has fully exited.
+            _maintenance.ResetCancelledIfSafe();
+            _maintenance.BeginIfNeeded(config);
+            _maintenance.CheckOverrun();
+        }
+
         if (DateTime.UtcNow < pending.ExecuteAtUtc)
         {
+            return true;
+        }
+
+        if (pending.Kind == PendingShutdownKind.Interactive &&
+            !WarningMaintenancePolicy.InteractiveShutdownConfirmed(pending.Confirmed))
+        {
+            if (DateTime.UtcNow > pending.ExecuteAtUtc.AddMinutes(1))
+                CancelPendingShutdown("warning expired but no SHUTDOWN_IDLE confirmation arrived");
+            return true;
+        }
+
+        // The countdown is the earliest shutdown time, never a deadline
+        // for interrupting a maintenance process.
+        if (config.MaintenanceEnabled)
+        {
+            _maintenance.BeginIfNeeded(config);
+            if (!_maintenance.Completed)
+            {
+                return true;
+            }
+        }
+
+        // An external Chocolatey installer holds this guard while swapping
+        // files. Even when maintenance is disabled, never shut down mid-upgrade.
+        if (IsExternalUpdateGuardHeld())
+        {
+            lock (_sync)
+            {
+                if (_pendingShutdown == pending)
+                {
+                    _pendingShutdown = pending with
+                    {
+                        ExecuteAtUtc = DateTime.UtcNow.AddSeconds(
+                            Math.Max(5, config.CheckIntervalSeconds))
+                    };
+                }
+            }
             return true;
         }
 
@@ -1418,6 +1525,17 @@ internal sealed class IdleShutdownService : ServiceBase
                     _pendingShutdown = existingPending;
                 }
 
+                // Preserve the existing cross-session grace period even
+                // when maintenance was started during the earlier warning.
+                // Confirmation arrives exclusively through SHUTDOWN_IDLE.
+                existingPending = existingPending with
+                {
+                    Confirmed = true,
+                    ExecuteAtUtc = existingPending.ExecuteAtUtc > coordinationDeadline
+                        ? existingPending.ExecuteAtUtc
+                        : coordinationDeadline
+                };
+                _pendingShutdown = existingPending;
                 effectiveDeadline = existingPending.ExecuteAtUtc;
             }
             else if (_pendingShutdown is null)
@@ -1480,6 +1598,36 @@ internal sealed class IdleShutdownService : ServiceBase
                 now,
                 TimeSpan.FromSeconds(AgentSessionStateFreshSeconds),
                 idleThreshold);
+        }
+    }
+
+    private static bool IsExternalUpdateGuardHeld()
+    {
+        // A detached SYSTEM updater can stop/restart the service. Never
+        // shutdown the machine during its execution, even after the idle
+        // countdown expires or maintenance is disabled.
+        if (SelfUpdateGuard.IsExternalUpgradeRunning())
+            return true;
+
+        try
+        {
+            Directory.CreateDirectory(AppConfig.BaseDirectory);
+            using var guard = new FileStream(
+                Path.Combine(AppConfig.BaseDirectory, "maintenance.lock"),
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None);
+            return false;
+        }
+        catch (IOException)
+        {
+            // The updater holds an exclusive handle during file replacement.
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // If safety cannot be verified, fail closed and do not shut down.
+            return true;
         }
     }
 
@@ -1591,7 +1739,8 @@ internal sealed class IdleShutdownService : ServiceBase
         PendingShutdownKind Kind,
         int? SessionId,
         string Reason,
-        DateTime ExecuteAtUtc);
+        DateTime ExecuteAtUtc,
+        bool Confirmed = true);
 
     private enum PendingShutdownKind
     {

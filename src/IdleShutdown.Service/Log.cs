@@ -2,6 +2,18 @@ namespace IdleShutdown.ServiceApp;
 
 internal static class Log
 {
+#if PRERELEASE_VERBOSE
+    public const bool DebugEnabled = true;
+#else
+    public const bool DebugEnabled = false;
+#endif
+
+    public static void Debug(string message)
+    {
+        if (DebugEnabled)
+            Write("DEBUG: " + message);
+    }
+
     private const long MaxLogBytes = 2L * 1024 * 1024;
     private const int ArchiveCount = 2;
     private static readonly object Sync = new();
@@ -15,8 +27,16 @@ internal static class Log
             lock (Sync)
             {
                 RotateIfNeeded();
-                File.AppendAllText(AppConfig.LogPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [SERVICE] {message}{Environment.NewLine}");
+                // Share read/write access with administrators tailing this log,
+                // as well as with interactive agents appending concurrently.
+                using var stream = new FileStream(
+                    AppConfig.LogPath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var writer = new StreamWriter(stream);
+                writer.WriteLine(
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [SERVICE] {message}");
             }
         }
         catch
@@ -57,7 +77,7 @@ internal static class Log
             AppConfig.LogPath,
             FileMode.Open,
             FileAccess.ReadWrite,
-            FileShare.None);
+            FileShare.ReadWrite | FileShare.Delete);
 
         if (source.Length < MaxLogBytes)
         {

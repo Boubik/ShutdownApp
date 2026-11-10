@@ -55,6 +55,8 @@ internal sealed class AgentApplicationContext : ApplicationContext
             $"{Environment.UserDomainName}\\" +
             $"{Environment.UserName} in session " +
             $"{_sessionId}.");
+        Log.Debug($"Prerelease agent diagnostics active; interval={config.CheckIntervalSeconds}s; " +
+            $"IdleMinutes={config.IdleMinutes}; WarningSeconds={config.WarningSeconds}; DryRun={config.DryRun}.");
     }
 
     private void TimerOnTick(
@@ -215,7 +217,9 @@ internal sealed class AgentApplicationContext : ApplicationContext
             using var dialog =
                 new WarningForm(
                     visibleWarningSeconds,
-                    inputTickAtStart);
+                    inputTickAtStart,
+                    keepOpenForMaintenance: config.MaintenanceEnabled && !config.DryRun,
+                    sendShutdownRequest: SendShutdownRequest);
 
             var result =
                 dialog.ShowDialog();

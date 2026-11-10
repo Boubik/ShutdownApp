@@ -18,6 +18,17 @@ internal sealed class AppConfig
     public int CheckIntervalSeconds { get; set; } = 5;
     public bool PauseWhenFullscreen { get; set; } = true;
     public bool DryRun { get; set; } = false;
+
+    // Optional for backwards compatibility with 1.x configurations.
+    public bool MaintenanceEnabled { get; set; } = false;
+    public bool WindowsUpdateEnabled { get; set; } = true;
+    public bool DriverUpdatesEnabled { get; set; } = true;
+    public bool OptionalDriversEnabled { get; set; } = false;
+    public bool ChocolateyEnabled { get; set; } = true;
+    public string? ChocolateySource { get; set; }
+    public int MaintenanceMaxMinutes { get; set; } = 120;
+    // Separate SYSTEM task; defaults disabled to preserve 1.x deployments.
+    public bool SelfUpdateEnabled { get; set; } = false;
     public bool IsValid { get; private set; } = true;
     public string? LoadError { get; private set; }
 
@@ -83,7 +94,12 @@ internal sealed class AppConfig
             if (
                 config.IdleMinutes < 1 ||
                 config.WarningSeconds < 1 ||
-                config.CheckIntervalSeconds < 1)
+                config.CheckIntervalSeconds < 1 ||
+                config.MaintenanceMaxMinutes < 1 ||
+                config.MaintenanceMaxMinutes > 1440 ||
+                (config.ChocolateySource is not null &&
+                 (!Uri.TryCreate(config.ChocolateySource, UriKind.Absolute, out var sourceUri) ||
+                  (sourceUri.Scheme != Uri.UriSchemeHttps && sourceUri.Scheme != Uri.UriSchemeHttp))))
             {
                 return Invalid(
                     "all timeout and interval values must be at least 1");

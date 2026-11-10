@@ -21,8 +21,12 @@ internal sealed class WarningForm : Form
     private readonly UiPalette _palette;
     private readonly long _machineActivityVersion;
     private TimeSpan _lastTopmostRefreshAt;
+    private readonly bool _keepOpenForMaintenance;
+    private readonly Func<bool>? _sendShutdownRequest;
+    private bool _shutdownRequestSent;
 
     private readonly Label _countdownLabel;
+    private readonly Label _countdownCaption;
     private readonly Label _statusLabel;
     private readonly Panel _progressTrack;
     private readonly Panel _progressFill;
@@ -31,8 +35,12 @@ internal sealed class WarningForm : Form
 
     public WarningForm(
         int warningSeconds,
-        uint? inputTickAtStart)
+        uint? inputTickAtStart,
+        bool keepOpenForMaintenance = false,
+        Func<bool>? sendShutdownRequest = null)
     {
+        _keepOpenForMaintenance = keepOpenForMaintenance;
+        _sendShutdownRequest = sendShutdownRequest;
         _warningSeconds = Math.Max(1, warningSeconds);
         _inputTickAtStart = inputTickAtStart;
         _ui = LocalizedText.Current;
@@ -101,12 +109,14 @@ internal sealed class WarningForm : Form
             ForeColor = _palette.SecondaryText,
             Location = new Point(120, 75),
             Size = new Size(408, 50),
-            Text = _ui.Status
+            Text = _keepOpenForMaintenance
+                ? _ui.MaintenancePreWarningStatus
+                : _ui.Status
         };
 
         card.Controls.Add(_statusLabel);
 
-        var countdownCaption = new Label
+        _countdownCaption = new Label
         {
             AutoSize = false,
             Font = new Font("Segoe UI", 10F, FontStyle.Regular),
@@ -117,7 +127,7 @@ internal sealed class WarningForm : Form
             TextAlign = ContentAlignment.MiddleCenter
         };
 
-        card.Controls.Add(countdownCaption);
+        card.Controls.Add(_countdownCaption);
 
         _countdownLabel = new Label
         {
@@ -191,8 +201,8 @@ internal sealed class WarningForm : Form
             AutoSize = false,
             Font = new Font("Segoe UI", 7F, FontStyle.Regular),
             ForeColor = _palette.MutedText,
-            Location = new Point(476, 348),
-            Size = new Size(82, 14),
+            Location = new Point(420, 348),
+            Size = new Size(138, 14),
             TabStop = false,
             Text = GetVersionText(),
             TextAlign = ContentAlignment.BottomRight
@@ -301,9 +311,37 @@ internal sealed class WarningForm : Form
 
         if (remaining <= TimeSpan.Zero)
         {
-            _timer.Stop();
-            DialogResult = DialogResult.OK;
-            Close();
+            if (!WarningDisplayPolicy.ShouldRemainVisibleAtZero(
+                    _keepOpenForMaintenance))
+            {
+                _timer.Stop();
+                DialogResult = DialogResult.OK;
+                Close();
+                return;
+            }
+
+            _countdownLabel.Text = "00:00";
+            _countdownLabel.ForeColor = _palette.Accent;
+            _progressFill.Width = 1;
+            _countdownCaption.Text = _ui.MaintenanceCountdownCaption;
+            _statusLabel.Text = _ui.MaintenanceStatus;
+
+            if (!_shutdownRequestSent)
+            {
+                // Send exactly once; the service remains the sole authority
+                // deciding whether/when the machine can safely shut down.
+                _shutdownRequestSent = true;
+                if (_sendShutdownRequest?.Invoke() != true)
+                {
+                    _timer.Stop();
+                    DialogResult = DialogResult.Abort;
+                    Close();
+                    return;
+                }
+
+                Log.Write("Countdown reached 00:00; warning remains visible " +
+                    "while the service completes background maintenance.");
+            }
             return;
         }
 
@@ -358,14 +396,8 @@ internal sealed class WarningForm : Form
         return $"{seconds / 60:00}:{seconds % 60:00}";
     }
 
-    private static string GetVersionText()
-    {
-        var version = typeof(WarningForm).Assembly.GetName().Version;
-
-        return version is null
-            ? string.Empty
-            : $"v{version.Major}.{version.Minor}.{version.Build}";
-    }
+    private static string GetVersionText() =>
+        VersionDisplay.FromAssembly(typeof(WarningForm).Assembly);
 
     private void DrawSleepIcon(
         object? sender,

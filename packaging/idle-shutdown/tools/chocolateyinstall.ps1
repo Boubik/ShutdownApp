@@ -10,6 +10,7 @@ $defaultConfigPath = Join-Path $payloadDir 'config.json'
 $logPath = Join-Path $dataDir 'IdleShutdown.log'
 $serviceName = 'IdleShutdown'
 $taskName = 'Idle Shutdown Agent'
+$selfUpdateTaskName = 'Idle Shutdown Self Update'
 $parameters = Get-PackageParameters
 
 function Set-SoftwareInventoryEntry {
@@ -104,6 +105,73 @@ function Get-BooleanParameter {
     return $parsed
 }
 
+
+function Get-InstalledAgentProcesses {
+    $agentPath = Join-Path $installDir 'IdleShutdown.Agent.exe'
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'IdleShutdown.Agent.exe'" -ErrorAction Stop)
+    foreach ($process in $processes) {
+        if (-not $process.ExecutablePath) { continue }
+        if ([string]::Equals(
+                [IO.Path]::GetFullPath([string]$process.ExecutablePath),
+                [IO.Path]::GetFullPath($agentPath),
+                [StringComparison]::OrdinalIgnoreCase)) {
+            $process
+        }
+    }
+}
+
+function Stop-InstalledAgents {
+    # The scheduled task must be removed before this function is called.
+    for ($attempt = 1; $attempt -le 15; $attempt++) {
+        $agents = @(Get-InstalledAgentProcesses)
+        if ($agents.Count -eq 0) { return }
+        foreach ($agent in $agents) {
+            Write-Host ("Stopping IdleShutdown.Agent.exe PID={0}, session={1}" -f $agent.ProcessId, $agent.SessionId)
+            Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 600
+    }
+    $remaining = @(Get-InstalledAgentProcesses)
+    if ($remaining.Count -gt 0) {
+        throw ("Cannot replace IdleShutdown.Agent.exe: {0} process(es) remain running." -f $remaining.Count)
+    }
+}
+
+function Assert-NoActiveIdleMaintenance {
+    # Compatibility check for old betas which do not hold maintenance.lock.
+    # Their Windows Update and Chocolatey processes are direct service children.
+    $services = @(Get-CimInstance Win32_Process -Filter "Name = 'IdleShutdown.Service.exe'" -ErrorAction Stop)
+    if ($services.Count -eq 0) { return }
+    $ids = @($services | ForEach-Object { [int]$_.ProcessId })
+    $children = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+        Where-Object {
+            $ids -contains [int]$_.ParentProcessId -and
+            $_.Name -in @('powershell.exe', 'pwsh.exe', 'choco.exe')
+        })
+    if ($children.Count -gt 0) {
+        $details = ($children | ForEach-Object { "$($_.Name) PID=$($_.ProcessId)" }) -join ', '
+        throw ("IdleShutdown maintenance is still running: $details. Upgrade postponed to protect running installers.")
+    }
+}
+
+function New-IdleUpdateGuard {
+    # On current versions, service owns the same file exclusively during
+    # maintenance. Keep this handle open until the install finishes.
+    New-Item $dataDir -ItemType Directory -Force | Out-Null
+    $guardPath = Join-Path $dataDir 'maintenance.lock'
+    try {
+        return [System.IO.FileStream]::new(
+            $guardPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None)
+    }
+    catch [System.IO.IOException] {
+        throw ('IdleShutdown is performing maintenance or another installation. ' +
+            'Upgrade refused; retry after all updates finish. ' + $_.Exception.Message)
+    }
+}
+
 $serviceExe = Join-Path $payloadDir 'Service\IdleShutdown.Service.exe'
 $agentExe = Join-Path $payloadDir 'Agent\IdleShutdown.Agent.exe'
 
@@ -128,7 +196,15 @@ foreach ($name in @(
     'WarningSeconds',
     'CheckIntervalSeconds',
     'PauseWhenFullscreen',
-    'DryRun'
+    'DryRun',
+    'MaintenanceEnabled',
+    'WindowsUpdateEnabled',
+    'DriverUpdatesEnabled',
+    'OptionalDriversEnabled',
+    'ChocolateyEnabled',
+    'ChocolateySource',
+    'MaintenanceMaxMinutes',
+    'SelfUpdateEnabled'
 )) {
     $property = $defaults.PSObject.Properties[$name]
     if ($null -eq $property) {
@@ -159,6 +235,28 @@ $config.WarningSeconds = Get-PositiveIntegerParameter 'WarningSeconds' $config.W
 $config.CheckIntervalSeconds = Get-PositiveIntegerParameter 'CheckIntervalSeconds' $config.CheckIntervalSeconds
 $config.PauseWhenFullscreen = Get-BooleanParameter 'PauseWhenFullscreen' $config.PauseWhenFullscreen
 $config.DryRun = Get-BooleanParameter 'DryRun' $config.DryRun
+$config.MaintenanceEnabled = Get-BooleanParameter 'MaintenanceEnabled' $config.MaintenanceEnabled
+$config.WindowsUpdateEnabled = Get-BooleanParameter 'WindowsUpdateEnabled' $config.WindowsUpdateEnabled
+$config.DriverUpdatesEnabled = Get-BooleanParameter 'DriverUpdatesEnabled' $config.DriverUpdatesEnabled
+$config.OptionalDriversEnabled = Get-BooleanParameter 'OptionalDriversEnabled' $config.OptionalDriversEnabled
+$config.ChocolateyEnabled = Get-BooleanParameter 'ChocolateyEnabled' $config.ChocolateyEnabled
+$config.MaintenanceMaxMinutes = Get-PositiveIntegerParameter 'MaintenanceMaxMinutes' $config.MaintenanceMaxMinutes
+$config.SelfUpdateEnabled = Get-BooleanParameter 'SelfUpdateEnabled' $config.SelfUpdateEnabled
+if ($parameters.ContainsKey('SelfUpdateAllowPrerelease')) {
+    throw 'Automatic self-updates are STABLE ONLY. /SelfUpdateAllowPrerelease is not supported.'
+}
+if ($config.MaintenanceMaxMinutes -gt 1440) { throw 'MaintenanceMaxMinutes must be 1440 or less.' }
+if ($parameters.ContainsKey('ChocolateySource')) {
+    $source = [string] $parameters['ChocolateySource']
+    $config.ChocolateySource = if ([string]::IsNullOrWhiteSpace($source)) { $null } else { $source.Trim() }
+}
+if (-not [string]::IsNullOrWhiteSpace([string] $config.ChocolateySource)) {
+    $uri = $null
+    if (-not [Uri]::TryCreate([string] $config.ChocolateySource, [UriKind]::Absolute, [ref] $uri) -or
+        $uri.Scheme -notin @('https', 'http')) {
+        throw 'ChocolateySource must be a valid HTTP(S) URL.'
+    }
+}
 
 foreach ($removedParameter in @('LockedMinutes', 'NoUserMinutes')) {
     if ($parameters.ContainsKey($removedParameter)) {
@@ -168,16 +266,63 @@ foreach ($removedParameter in @('LockedMinutes', 'NoUserMinutes')) {
     }
 }
 
-Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Stop-Service $serviceName -Force -ErrorAction SilentlyContinue
+# Stage the complete new payload before stopping the working installation.
+# This also prevents a half-upgraded directory if a copy later fails.
+$stageDir = Join-Path $env:ProgramFiles ('IdleShutdown.stage.' + [guid]::NewGuid().ToString('N'))
+$backupDir = Join-Path $env:ProgramFiles ('IdleShutdown.backup.' + [guid]::NewGuid().ToString('N'))
+$hadExistingInstall = Test-Path $installDir
+$previousConfig = if (Test-Path $configPath) { Get-Content $configPath -Raw } else { $null }
+$previousInventoryVersion = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -ErrorAction SilentlyContinue).DisplayVersion
+$previousTaskXml = $null
+$oldService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+$wasServiceRunning = $null -ne $oldService -and $oldService.Status -ne 'Stopped'
+$guard = $null
+$createdSelfUpdateTask = $false
+$previousSelfUpdateTaskXml = $null
+$servicesTouched = $false
+$swapped = $false
 
-New-Item $installDir -ItemType Directory -Force | Out-Null
-New-Item $dataDir -ItemType Directory -Force | Out-Null
-Copy-Item (Join-Path $payloadDir 'Service\*') $installDir -Recurse -Force
-Copy-Item (Join-Path $payloadDir 'Agent\*') $installDir -Recurse -Force
+New-Item $stageDir -ItemType Directory -Force | Out-Null
+try {
+    Copy-Item (Join-Path $payloadDir 'Service\*') $stageDir -Recurse -Force -ErrorAction Stop
+    Copy-Item (Join-Path $payloadDir 'Agent\*') $stageDir -Recurse -Force -ErrorAction Stop
 
-$config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+    if (-not (Test-Path (Join-Path $stageDir 'IdleShutdown.Service.exe')) -or
+        -not (Test-Path (Join-Path $stageDir 'IdleShutdown.Agent.exe'))) {
+        throw 'Incomplete staged payload; refusing to stop the installed service.'
+    }
+
+    $guard = New-IdleUpdateGuard
+    Assert-NoActiveIdleMaintenance
+
+    # Save the previously registered task so we can restore it on failure.
+    $oldTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($null -ne $oldTask) {
+        $previousTaskXml = Export-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    }
+
+    $servicesTouched = $true
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Stop-InstalledAgents
+
+    $currentService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($null -ne $currentService -and $currentService.Status -ne 'Stopped') {
+        Stop-Service -Name $serviceName -Force -ErrorAction Stop
+        (Get-Service -Name $serviceName).WaitForStatus(
+            [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+            [TimeSpan]::FromSeconds(30))
+    }
+
+    # Swap directories only after the agent and service have really exited.
+    if ($hadExistingInstall) {
+        Move-Item -LiteralPath $installDir -Destination $backupDir -ErrorAction Stop
+    }
+    Move-Item -LiteralPath $stageDir -Destination $installDir -ErrorAction Stop
+    $swapped = $true
+
+    $config | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+
 
 if (-not (Test-Path $logPath)) {
     New-Item $logPath -ItemType File -Force | Out-Null
@@ -239,6 +384,13 @@ finally {
 
 Install-BinFile -Name 'idle-shutdown-test' -Path (Join-Path $toolsDir 'idle-shutdown-test.cmd')
 Start-Service $serviceName
+(Get-Service -Name $serviceName).WaitForStatus(
+    [System.ServiceProcess.ServiceControllerStatus]::Running,
+    [TimeSpan]::FromSeconds(30))
+Start-Sleep -Seconds 1
+if ((Get-Service -Name $serviceName).Status -ne 'Running') {
+    throw 'The upgraded IdleShutdown service did not remain running; restoring the previous version.'
+}
 Set-SoftwareInventoryEntry -InstalledAgentExe $installedAgentExe
 
 # A logon trigger created during an already active session does not fire
@@ -258,3 +410,142 @@ if (Get-Process 'explorer' -ErrorAction SilentlyContinue) {
 
 Write-Host "Idle Shutdown installed. Configuration: $configPath"
 Write-Host "Log: $logPath"
+
+# A detached updater helper lives in ProgramData, not alongside the service.
+# It must not be overwritten while an updater task could be running.
+if ($config.SelfUpdateEnabled) {
+    $helperSource = Join-Path $toolsDir 'self-update.ps1'
+    if (-not (Test-Path -LiteralPath $helperSource)) {
+        throw 'The beta package is missing its detached self-update helper.'
+    }
+
+    $updaterDir = Join-Path $dataDir 'Updater'
+    New-Item -Path $updaterDir -ItemType Directory -Force | Out-Null
+
+    # SYSTEM executes this helper; explicitly prohibit standard users from
+    # replacing scripts or introducing privileged code into this directory.
+    $secureAcl = New-Object System.Security.AccessControl.DirectorySecurity
+    $secureAcl.SetAccessRuleProtection($true, $false)
+    foreach ($sidString in @('S-1-5-18', 'S-1-5-32-544')) {
+        $identity = [System.Security.Principal.SecurityIdentifier]::new($sidString)
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $identity, [System.Security.AccessControl.FileSystemRights]::FullControl,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+             [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $secureAcl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $updaterDir -AclObject $secureAcl -ErrorAction Stop
+
+    $helperVersion = [string]$env:ChocolateyPackageVersion
+    if ($helperVersion -notmatch '^2\.0\.0-(?:beta\.\d+|rc\.\d+)$') {
+        $helperVersion = '2.0.0'
+    }
+    $helperTarget = Join-Path $updaterDir ("SelfUpdate-$helperVersion.ps1")
+    if (-not (Test-Path -LiteralPath $helperTarget)) {
+        Copy-Item -LiteralPath $helperSource -Destination $helperTarget -ErrorAction Stop
+    }
+
+    # The running beta.8 helper must stay untouched; create a new immutable
+    # stable helper, then update the scheduled task's FUTURE action only.
+    # Set-ScheduledTask changes do not affect an already-running task instance.
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument (
+        '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helperTarget + '"')
+    $existingSelfTask = Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue
+    if ($null -eq $existingSelfTask) {
+        $triggers = @(
+            (New-ScheduledTaskTrigger -AtStartup),
+            (New-ScheduledTaskTrigger -Daily -At '03:00')
+        )
+        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'Safely updates Idle Shutdown at startup or during unattended daily maintenance.' -ErrorAction Stop | Out-Null
+        $createdSelfUpdateTask = $true
+        Write-Host "Created SYSTEM self-updater task: $selfUpdateTaskName"
+    }
+    else {
+        $oldAction = @($existingSelfTask.Actions) | Select-Object -First 1
+        if ($null -eq $oldAction -or
+            $oldAction.Execute -ne $action.Execute -or
+            $oldAction.Arguments -ne $action.Arguments) {
+            $previousSelfUpdateTaskXml = Export-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction Stop
+            Set-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -ErrorAction Stop | Out-Null
+            Write-Host "Updated future SYSTEM self-updater runs to: $helperTarget"
+        }
+    }
+}
+
+
+    # A successful upgrade can now discard the previous application binaries.
+    if (Test-Path $backupDir) {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+catch {
+    $failure = $_
+    Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
+    if ($createdSelfUpdateTask) {
+        Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    elseif ($previousSelfUpdateTaskXml) {
+        try {
+            Register-ScheduledTask -TaskName $selfUpdateTaskName -Xml $previousSelfUpdateTaskXml -Force -ErrorAction Stop | Out-Null
+        }
+        catch {
+            Write-Warning ('Could not restore previous self-updater task: ' + $_.Exception.Message)
+        }
+    }
+
+    if ($servicesTouched) {
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+        try { Stop-InstalledAgents } catch { Write-Warning $_.Exception.Message }
+
+        # Preserve the previous version if the directory swap has started.
+        if ($swapped -or (Test-Path $backupDir)) {
+            if (Test-Path $installDir) {
+                try {
+                    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning ('Could not remove failed installation: ' + $_.Exception.Message)
+                }
+            }
+            if (Test-Path $backupDir) {
+                Move-Item -LiteralPath $backupDir -Destination $installDir -ErrorAction Stop
+                Write-Warning 'Restored previous IdleShutdown application binaries.'
+            }
+        }
+
+        if ($null -ne $previousConfig) {
+            $previousConfig | Set-Content -LiteralPath $configPath -Encoding UTF8
+        }
+        if ($previousTaskXml) {
+            try {
+                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force -ErrorAction Stop | Out-Null
+            }
+            catch { Write-Warning ('Could not restore agent task: ' + $_.Exception.Message) }
+        }
+        if ($hadExistingInstall -and $wasServiceRunning) {
+            try { Start-Service -Name $serviceName -ErrorAction Stop }
+            catch { Write-Warning ('Could not restart previous service: ' + $_.Exception.Message) }
+        }
+        if ($previousInventoryVersion) {
+            try {
+                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -Name 'DisplayVersion' -Value $previousInventoryVersion -ErrorAction Stop
+            }
+            catch { Write-Warning ('Could not restore installed version registry value: ' + $_.Exception.Message) }
+        }
+    }
+    throw $failure
+}
+finally {
+    if ($guard) { $guard.Dispose() }
+    if (Test-Path $stageDir) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+

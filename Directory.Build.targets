@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- VERSION is the single source of truth; opt in to verbose diagnostics at compile time. -->
+    <!-- Release builds remain optimized; PRERELEASE_VERBOSE only adds diagnostic logging. -->
+    <IsPrereleaseBuild>$([System.String]::Copy('$(Version)').Contains('-'))</IsPrereleaseBuild>
+    <DefineConstants Condition="'$(IsPrereleaseBuild)' == 'True'">$(DefineConstants);PRERELEASE_VERBOSE</DefineConstants>
+  </PropertyGroup>
+</Project>

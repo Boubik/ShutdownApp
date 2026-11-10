@@ -8,6 +8,9 @@
 
   <ItemGroup>
     <Compile
+      Include="..\..\src\IdleShutdown.Agent\VersionDisplay.cs"
+      Link="VersionDisplay.cs" />
+    <Compile
       Include="..\..\src\IdleShutdown.Agent\IdleThreshold.cs"
       Link="IdleThreshold.cs" />
     <Compile
@@ -28,6 +31,9 @@
     <Compile
       Include="..\..\src\IdleShutdown.Service\InteractiveSessionPolicy.cs"
       Link="InteractiveSessionPolicy.cs" />
+    <Compile
+      Include="..\..\src\IdleShutdown.Service\WarningMaintenancePolicy.cs"
+      Link="WarningMaintenancePolicy.cs" />
     <Compile
       Include="..\..\src\IdleShutdown.Service\WarningCoordinationPolicy.cs"
       Link="WarningCoordinationPolicy.cs" />

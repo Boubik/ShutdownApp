@@ -11,7 +11,9 @@ Idle Shutdown automaticky vypíná neaktivní počítače s Windows. Řešení m
 - Odemčená relace: během `WarningSeconds` se ve všech odemčených lokálních/RDP relacích zobrazí společný popup. Libovolný nový vstup nebo tlačítko v dialogu vypnutí zruší.
 - Zamčená relace: stejná doba `WarningSeconds` proběhne bez popupu. Vstup na zamykací obrazovce zruší čekání a spustí celý `IdleMinutes` timeout znovu.
 - Žádný přihlášený uživatel: `WarningSeconds` proběhne bez popupu. Pohyb myši nebo stisk klávesy na přihlašovací obrazovce zruší čekání a spustí celý timeout znovu.
-- Po vypršení obou dob služba odešle nevnucené (`/t 0`, bez `/f`) vypnutí, takže Windows může upozornit na aplikaci s neuloženými daty.
+- Pokud je povolena údržba, **Windows Update a Chocolatey se spouštějí už při zobrazení varovného okna**, respektive při začátku tiché ochranné doby u zamčeného/nepřihlášeného počítače. Kontrola a instalace aktualizací probíhají souběžně s odpočtem. Vlastní instalace se navzájem koordinují, aby si nekonkurovaly při MSI transakcích.
+- Po skončení odpočtu zůstává popup na `00:00` s informací, že se čeká na dokončení aktualizací. Dokud běží údržba, počítač se nevypne. Při návratu uživatele se zruší vypnutí a nezahajují se další instalační kroky; již běžící instalátor dostane prostor bezpečně skončit.
+- Po vypršení obou dob a případném dokončení údržby služba odešle nevnucené (`/t 0`, bez `/f`) vypnutí, takže Windows může upozornit na aplikaci s neuloženými daty.
 - Pokud je přihlášeno více uživatelů, zamčený timeout se použije pouze tehdy, když jsou zamčené nebo odpojené všechny jejich relace. Jedna aktivní odemčená relace vypnutí zablokuje.
 - Agent běží samostatně v každé lokální i RDP relaci. Jakmile první relace dosáhne timeoutu, služba vyhlásí jeden společný deadline a popup se zbývajícím časem převezmou všechny odemčené relace. Nový ověřený vstup nebo tlačítko „pokračovat“ v jedné relaci zruší vypnutí a zavře popup ve všech ostatních relacích. Neočekávané zavření popupu bez ověřené změny vstupu celý `IdleMinutes` timer neresetuje. Pokud odpočty nezačnou přesně současně, služba čeká na ten, který skončí nejpozději. Požadavek jedné neaktivní relace služba odmítne, pokud je jiná odemčená relace stále aktivní.
 - Popup si během odpočtu obnovuje nejvyšší `topmost` pozici bez aktivace a bez opakovaného kradení focusu, takže jej nepřekryje Explorer, instalátor ani updater.
@@ -33,7 +35,15 @@ Výchozí produkční konfigurace:
   "WarningSeconds": 300,
   "CheckIntervalSeconds": 5,
   "PauseWhenFullscreen": true,
-  "DryRun": false
+  "DryRun": false,
+  "MaintenanceEnabled": false,
+  "WindowsUpdateEnabled": true,
+  "DriverUpdatesEnabled": true,
+  "OptionalDriversEnabled": false,
+  "ChocolateyEnabled": true,
+  "ChocolateySource": null,
+  "MaintenanceMaxMinutes": 120,
+  "SelfUpdateEnabled": false
 }
 ```
 
@@ -49,10 +59,59 @@ C:\ProgramData\IdleShutdown\config.json
 C:\ProgramData\IdleShutdown\IdleShutdown.log
 ```
 
-V produkčním režimu se zapisují jen důležité změny stavu, odklady, chyby a
-provedené vypnutí. Podrobné desetisekundové diagnostiky jsou zapnuté pouze při
-`DryRun: true`. Log se po dosažení 2 MB rotuje na `IdleShutdown.log.1` a
-`IdleShutdown.log.2`; celková maximální velikost je přibližně 6 MB.
+Stabilní verze zapisuje důležité změny stavu, výsledky aktualizací,
+odklady a chyby; podrobnější řádky `DEBUG` se do sestavení zapínají **pouze
+u beta/RC verzí**. Nastavení `DryRun` slouží pro simulaci vypnutí, nikoliv
+pro zapnutí diagnostiky. Hlavní log `IdleShutdown.log` se automaticky rotuje
+po 2 MiB na `.1` a `.2` (celkem přibližně 6 MiB).
+
+Samostatný automatický aktualizátor zapisuje do
+`C:\ProgramData\IdleShutdown\SelfUpdate.log`; i tento soubor má
+**limit 2 MiB a dvě rotované zálohy** (`SelfUpdate.log.1` a
+`SelfUpdate.log.2`). Není nutné jej ručně mazat.
+
+## Aktualizace systému a aplikací
+
+Při `MaintenanceEnabled: true` se ihned se začátkem upozornění spustí:
+
+- **Windows Update** – aktualizace systému a podle konfigurace ovladače; volitelné ovladače jsou standardně vypnuté. Aktualizace vyžadující interakci uživatele se přeskočí.
+- **Chocolatey** – `choco upgrade all` z konfigurací zvoleného zdroje. Balíček `idle-shutdown` je z tohoto běhu úmyslně vynechán, aby služba nepřepisovala sama sebe během instalací.
+
+Po dosažení `MaintenanceMaxMinutes` se přestanou zahajovat další části
+údržby, ale již běžící instalátor není násilně ukončen. Aplikace sama
+nevyvolává automatický restart; některé aktualizace však mohou vyžadovat
+pozdější restart nebo jej vyvolat vlastní instalací. `ChocolateySource: null`
+použije nakonfigurované zdroje v Chocolatey.
+
+### Bezpečná samoaktualizace Idle Shutdown
+
+`SelfUpdateEnabled: true` povolí **oddělenou naplánovanou úlohu pod SYSTEM**
+s názvem `Idle Shutdown Self Update`. Ta kontroluje novější vydání při
+startu Windows a denně ve **3:00**. Kontrolu přeskočí, pokud je někdo
+přihlášen (včetně zamčené nebo odpojené RDP relace), probíhají aktualizace
+nebo již běží jiný self-updater. Není součástí probíhající údržby.
+
+**Automatická samoaktualizace přijímá výhradně stabilní verze** (např.
+`2.0.0`, `2.0.1`), nikoliv `beta`, `alpha` ani `rc`. Neexistuje
+konfigurační přepínač, který by automatické instalování bet povoloval.
+Beta verze se instalují ručně a mohou se automaticky povýšit na novější
+stabilní vydání. Instalátor před výměnou souborů ukončí agenty, zastaví
+službu, zálohuje původní soubory a při chybě se pokusí obnovit původní stav.
+Spuštěný self-updater zůstává mimo složku v `Program Files`.
+
+Kontrolní příkazy (PowerShell jako správce):
+
+```powershell
+Get-ScheduledTask -TaskName "Idle Shutdown Self Update"
+Get-ScheduledTaskInfo -TaskName "Idle Shutdown Self Update"
+Get-Content "$env:ProgramData\IdleShutdown\SelfUpdate.log" -Tail 80
+choco list --limit-output
+```
+
+Pokud se `SelfUpdate.log` ještě nevytvořil, nemusí to být chyba: vzniká
+při prvním diagnostickém zápisu pomocné úlohy. Automatické vydání na GitHub
+**nenahrává balíček do interního Chocolatey repozitáře**; do vlastního feedu
+jej musí nejprve publikovat správce.
 
 ## Sestavení
 
@@ -129,6 +188,15 @@ Výsledkem je `dist\package\idle-shutdown.nupkg`; předchozí lokální balíčk
 se odstraní. Verze zůstává uložená uvnitř metadat `.nupkg`, takže ji ProGet
 správně rozpozná. Pro publikaci nové verze do ProGetu je nutné nejprve zvýšit
 číslo v souboru `VERSION`.
+
+Pro testovací prostředí s vlastním repozitářem a krátkým odpočtem
+(pouze na vyhrazeném PC; `DryRun:false` provede skutečnou údržbu a vypnutí):
+
+```powershell
+$repo = "https://choco.cpto.ujep.cz/nuget/choco-internal/"
+choco upgrade idle-shutdown -y --version=2.0.0 --source="$repo" `
+  --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:true /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30 /SelfUpdateEnabled:true'"
+```
 
 Instalace z interního zdroje:
 
