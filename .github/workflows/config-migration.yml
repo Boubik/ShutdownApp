@@ -1,0 +1,26 @@
+name: Configuration migration tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/idle-shutdown/tools/config-migrate.ps1'
+      - 'packaging/idle-shutdown/tools/chocolateyinstall.ps1'
+      - 'tests/ConfigMigration.Tests.ps1'
+      - 'config.json'
+      - '.github/workflows/config-migration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migration:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run real PowerShell config migrations
+        run: ./tests/ConfigMigration.Tests.ps1
