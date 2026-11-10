@@ -41,6 +41,38 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $defines -notmatch 'PRERELEASE_VERBOSE') {
             throw "Pre-release builds MUST compile with PRERELEASE_VERBOSE (got $defines)."
           }
+      - name: Validate Chocolatey installer PowerShell syntax and safety guards
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @(
+            'packaging/idle-shutdown/tools/chocolateyinstall.ps1',
+            'packaging/idle-shutdown/tools/chocolateyuninstall.ps1'
+          )) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file).Path, [ref]$tokens, [ref]$parseErrors)
+            if (@($parseErrors).Count -gt 0) {
+              foreach ($errorItem in $parseErrors) {
+                Write-Host ("{0}:{1}: {2}" -f $file, $errorItem.Extent.StartLineNumber, $errorItem.Message)
+              }
+              throw "PowerShell parser rejected $file."
+            }
+          }
+          $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
+          foreach ($expected in @('New-IdleUpdateGuard', 'Assert-NoActiveIdleMaintenance',
+                                   'Stop-InstalledAgents', 'IdleShutdown.backup.')) {
+            if (-not $installer.Contains($expected)) {
+              throw "Installer lacks critical upgrade protection: $expected"
+            }
+          }
+          $updater = Get-Content 'src/IdleShutdown.Service/IdleMaintenance.cs' -Raw
+          if (-not $updater.Contains('"--except=idle-shutdown"')) {
+            throw 'Maintenance must exclude its own Chocolatey package.'
+          }
+          if (-not $updater.Contains('maintenance.lock')) {
+            throw 'Service must hold the maintenance lock during updates.'
+          }
       - name: Run tests and build Chocolatey package
         run: .\build.bat
       - name: Check package version
