@@ -1339,6 +1339,24 @@ internal sealed class IdleShutdownService : ServiceBase
             }
         }
 
+        // An external Chocolatey installer holds this guard while swapping
+        // files. Even when maintenance is disabled, never shut down mid-upgrade.
+        if (IsExternalUpdateGuardHeld())
+        {
+            lock (_sync)
+            {
+                if (_pendingShutdown == pending)
+                {
+                    _pendingShutdown = pending with
+                    {
+                        ExecuteAtUtc = DateTime.UtcNow.AddSeconds(
+                            Math.Max(5, config.CheckIntervalSeconds))
+                    };
+                }
+            }
+            return true;
+        }
+
         if (ShouldDeferForSystemActivity(pending.Reason, config))
         {
             lock (_sync)
@@ -1501,6 +1519,30 @@ internal sealed class IdleShutdownService : ServiceBase
                 now,
                 TimeSpan.FromSeconds(AgentSessionStateFreshSeconds),
                 idleThreshold);
+        }
+    }
+
+    private static bool IsExternalUpdateGuardHeld()
+    {
+        try
+        {
+            Directory.CreateDirectory(AppConfig.BaseDirectory);
+            using var guard = new FileStream(
+                Path.Combine(AppConfig.BaseDirectory, "maintenance.lock"),
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None);
+            return false;
+        }
+        catch (IOException)
+        {
+            // The updater holds an exclusive handle during file replacement.
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // If safety cannot be verified, fail closed and do not shut down.
+            return true;
         }
     }
 
