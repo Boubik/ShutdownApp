@@ -86,6 +86,9 @@ jobs:
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $file).Path, [ref]$tokens, [ref]$parseErrors)
             if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) {
+                Write-Host ("{0}:{1}: {2}" -f $file, $parseError.Extent.StartLineNumber, $parseError.Message)
+              }
               throw "PowerShell script has a syntax error: $file"
             }
           }
