@@ -47,3 +47,16 @@ Use this only on a disposable test PC: after one idle minute plus a 30-second
 warning, the computer can begin installing updates and ultimately shut down.
 Windows Update policies and third-party package installers can independently
 require or initiate a reboot, which the application cannot fully control.
+
+## 2.0.0-beta.3 log-reader compatibility
+
+- Service and agent log appends now allow simultaneous readers such as
+  `Get-Content ... -Wait` instead of requiring an exclusive file handle.
+- The maintenance coordinator emits a once-per-minute prerelease heartbeat
+  while update installation is in progress, including elapsed minutes.
+- The initial countdown expiry starts maintenance; it is not a forced
+  shutdown deadline. Windows Update may need several minutes or longer.
+- Do not restart the IdleShutdown service or upgrade the package while
+  Windows Update / Chocolatey is still processing installers.
+- Runtime testing of concurrent readers and the Windows Update driver
+  path is still required even after GitHub Actions tests succeed.
