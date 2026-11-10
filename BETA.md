@@ -128,3 +128,38 @@ If an update is running, the installer refuses to touch the application and
 the previous version continues running. Wait for Windows Update/Chocolatey to
 finish, then rerun the exact command. Do not manually stop the service during
 active maintenance. Use only a dedicated Windows test machine for beta.6.
+
+
+## Beta 2.0.0-beta.7 — maintenance starts with the warning
+
+Maintenance now begins when the interactive warning is shown, instead of
+waiting for the countdown to reach zero. The agent sends WARNING_ACTIVE
+and the service starts Windows Update and Chocolatey immediately.
+However, WARNING_ACTIVE alone is NOT permission to shut down:
+SHUTDOWN_IDLE confirmation after the countdown is still required.
+The previous multi-session grace period remains effective.
+
+On locked or no-user machines, maintenance begins at the beginning of
+the silent grace period. Shutdown occurs only after both the grace
+period and all active update stages have completed. The warning remains
+visible at 00:00 while waiting for updates.
+
+Cancelling a warning never force-kills an in-flight installer.
+The WUA child checks a per-cycle cancellation marker before download and
+installation, including after waiting on the Chocolatey installation gate.
+Chocolatey checks for cancellation after inventory and before upgrading.
+Further warning cycles can start only after a cancelled cycle exits.
+
+The automatic Chocolatey upgrade intentionally excludes idle-shutdown.
+A beta or stable release appearing on the feed does not automatically
+self-update the running service; self-upgrade needs separate coordination.
+
+### Full test install command
+
+~~~powershell
+$repo = "https://choco.cpto.ujep.cz/nuget/choco-internal/"
+choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.7 --source="$repo" --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:true /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30'"
+~~~
+
+Upload the .nupkg to the internal test feed first. Use a dedicated
+Windows lab PC. Do not try to upgrade while maintenance is running.
