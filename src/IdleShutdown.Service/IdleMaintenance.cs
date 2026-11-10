@@ -169,6 +169,8 @@ internal sealed class IdleMaintenance
         // Windows Update Agent API, executed within LocalSystem, without a desktop prompt.
         // Optional drivers are opt-in. This API does not request a system reboot.
         const string script = """
+            # Produce readable localized update names in the service UTF-8 log.
+            [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
             $ErrorActionPreference = 'Stop'
             try {
                 $session = New-Object -ComObject Microsoft.Update.Session
@@ -254,6 +256,8 @@ internal sealed class IdleMaintenance
         {
             FileName = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
             Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}",
+            StandardOutputEncoding = new UTF8Encoding(false),
+            StandardErrorEncoding = new UTF8Encoding(false),
             UseShellExecute = false,
             CreateNoWindow = true
         };
