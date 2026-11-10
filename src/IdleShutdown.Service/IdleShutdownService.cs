@@ -1517,9 +1517,16 @@ internal sealed class IdleShutdownService : ServiceBase
                     _pendingShutdown = existingPending;
                 }
 
-                // Warning-only state is never sufficient for shutdown.
+                // Preserve the existing cross-session grace period even
+                // when maintenance was started during the earlier warning.
                 // Confirmation arrives exclusively through SHUTDOWN_IDLE.
-                existingPending = existingPending with { Confirmed = true };
+                existingPending = existingPending with
+                {
+                    Confirmed = true,
+                    ExecuteAtUtc = existingPending.ExecuteAtUtc > coordinationDeadline
+                        ? existingPending.ExecuteAtUtc
+                        : coordinationDeadline
+                };
                 _pendingShutdown = existingPending;
                 effectiveDeadline = existingPending.ExecuteAtUtc;
             }
