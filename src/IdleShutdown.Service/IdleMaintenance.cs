@@ -8,6 +8,13 @@ namespace IdleShutdown.ServiceApp;
 internal sealed class IdleMaintenance
 {
     private readonly object _sync = new();
+    // Chocolateyinstall.ps1 acquires this exclusive file handle before it
+    // stops the service. It is held throughout an active maintenance cycle.
+    // This prevents an external upgrade from dismantling a running updater.
+    private static readonly string MaintenanceGuardPath =
+        Path.Combine(AppConfig.BaseDirectory, "maintenance.lock");
+    private FileStream? _maintenanceGuard;
+    private DateTime _lastGuardFailureLogUtc;
     private const string InstallationGateName = @"Global\IdleShutdown.MaintenanceInstallGate";
     private Task? _task;
     private bool _cancelRequested;
@@ -40,6 +47,33 @@ internal sealed class IdleMaintenance
         {
             if (_task is not null)
                 return;
+            try
+            {
+                Directory.CreateDirectory(AppConfig.BaseDirectory);
+                _maintenanceGuard = new FileStream(
+                    MaintenanceGuardPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None);
+            }
+            catch (IOException ex)
+            {
+                if (DateTime.UtcNow - _lastGuardFailureLogUtc > TimeSpan.FromMinutes(1))
+                {
+                    Log.Write($"Maintenance: start deferred because upgrade/other maintenance owns guard: {ex.Message}");
+                    _lastGuardFailureLogUtc = DateTime.UtcNow;
+                }
+                return;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                if (DateTime.UtcNow - _lastGuardFailureLogUtc > TimeSpan.FromMinutes(1))
+                {
+                    Log.Write($"Maintenance: cannot acquire safety guard; shutdown deferred: {ex.Message}");
+                    _lastGuardFailureLogUtc = DateTime.UtcNow;
+                }
+                return;
+            }
             _cancelRequested = false;
             _warnedOverrun = false;
             _completed = false;
@@ -48,8 +82,22 @@ internal sealed class IdleMaintenance
             _startedUtc = DateTime.UtcNow;
             _nextHeartbeatUtc = _startedUtc.AddMinutes(1);
             _settings = config;
-            _task = Task.Run(RunAsync);
-            Log.Write("Maintenance: cycle started.");
+            _task = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    lock (_sync)
+                    {
+                        _maintenanceGuard?.Dispose();
+                        _maintenanceGuard = null;
+                    }
+                }
+            });
+            Log.Write("Maintenance: cycle started (self-update guard held).");
         }
     }
 
