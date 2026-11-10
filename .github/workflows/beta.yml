@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - develop/2.0
-    tags:
-      - 'v2.0.0-beta.*'
 
 permissions:
   contents: write
@@ -59,10 +57,49 @@ jobs:
           name: idle-shutdown-${{ steps.version.outputs.version }}-${{ github.run_number }}
           path: dist/package/idle-shutdown.nupkg
           retention-days: 30
-      - name: Publish tagged beta as GitHub prerelease
-        if: startsWith(github.ref, 'refs/tags/v2.0.0-beta.')
+      # A version is published exactly once: on its first successful build.
+      # Commits without a VERSION bump keep producing artifacts, but do not
+      # overwrite already-published prereleases. This also bootstraps beta.1.
+      - name: Automatically publish new beta to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create $env:TAG 'dist/package/idle-shutdown.nupkg' --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Idle Shutdown $env:TAG (beta)" --notes "Pre-release for controlled testing. NOT for production." --prerelease --latest=false
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:TAG
+          $refs = @(git ls-remote --tags --refs origin "refs/tags/$tag")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not check the remote tag $tag."
+          }
+
+          if ($refs.Count -gt 0) {
+            gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName --jq .tagName | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Tag $tag exists without a release. Refusing to move an existing tag."
+            }
+            Write-Host "$tag has already been published; leaving it unchanged."
+            exit 0
+          }
+
+          $notes = @(
+            "Automated beta prerelease of Idle Shutdown."
+            ""
+            "**Experimental build for controlled testing, not production deployment.**"
+            ""
+            "Built from commit `$env:GITHUB_SHA` on `develop/2.0`."
+            ""
+            "Contents: self-contained Windows x64 service, agent, and Chocolatey package."
+          )
+          $notes | Set-Content -Path 'beta-release-notes.md' -Encoding utf8
+
+          gh release create $tag 'dist/package/idle-shutdown.nupkg' `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "Idle Shutdown $tag (beta)" `
+            --notes-file 'beta-release-notes.md' `
+            --prerelease `
+            --latest=false
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub prerelease creation failed for $tag."
+          }
+          Write-Host "Published beta prerelease $tag (stable Latest remains unchanged)."
