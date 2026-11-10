@@ -12,6 +12,7 @@ internal sealed class IdleMaintenance
     private bool _cancelRequested;
     private bool _completed;
     private bool _warnedOverrun;
+    private bool _failed;
     private DateTime _startedUtc;
     private AppConfig? _settings;
 
@@ -25,15 +26,21 @@ internal sealed class IdleMaintenance
         get { lock (_sync) return _completed && _task?.IsCompleted == true; }
     }
 
+    public bool Failed
+    {
+        get { lock (_sync) return _failed && _task?.IsCompleted == true; }
+    }
+
     public void BeginIfNeeded(AppConfig config)
     {
         lock (_sync)
         {
-            if (_task is { IsCompleted: false } || _completed)
+            if (_task is not null)
                 return;
             _cancelRequested = false;
             _warnedOverrun = false;
             _completed = false;
+            _failed = false;
             _startedUtc = DateTime.UtcNow;
             _settings = config;
             _task = Task.Run(RunAsync);
@@ -62,6 +69,7 @@ internal sealed class IdleMaintenance
             _task = null;
             _completed = false;
             _cancelRequested = false;
+            _failed = false;
             _settings = null;
         }
     }
@@ -100,15 +108,24 @@ internal sealed class IdleMaintenance
             if (config.ChocolateyEnabled && MayStartNextStage())
                 await RunChocolateyAsync(config).ConfigureAwait(false);
 
+            bool success;
             lock (_sync)
+            {
                 _completed = !_cancelRequested;
-            Log.Write(_completed
+                _failed = _cancelRequested;
+                success = _completed;
+            }
+            Log.Write(success
                 ? "Maintenance: cycle completed; shutdown may proceed after final safety checks."
                 : "Maintenance: cancelled or timed out; automatic shutdown is not authorized.");
         }
         catch (Exception ex)
         {
-            lock (_sync) _completed = false;
+            lock (_sync)
+            {
+                _completed = false;
+                _failed = true;
+            }
             Log.Write($"Maintenance failed: {ex.GetType().Name}: {ex.Message}");
             // Do not authorize shutdown following an unhandled maintenance error.
         }
