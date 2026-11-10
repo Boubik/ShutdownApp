@@ -16,7 +16,7 @@ function Assert-Throws {
     $threw = $false
     try { & $Block | Out-Null }
     catch { $threw = $true }
-    if (-not $threw) { throw "FAILED $Name: expected rejection" }
+    if (-not $threw) { throw "FAILED ${Name}: expected rejection" }
 }
 
 Assert-Equal $target $defaults.ConfigVersion 'packaged config version'
