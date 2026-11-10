@@ -344,24 +344,27 @@ internal sealed class IdleMaintenance
                     1, 1, 'Global\IdleShutdown.MaintenanceInstallGate')
                 Write-Output "IDLE_WU|WAITING_FOR_INSTALL_GATE|Chocolatey may still be installing"
                 [void] $installGate.WaitOne()
+                $cancelledAfterGate = $false
                 try {
-                    if (Test-Path -LiteralPath $env:IDLE_MAINTENANCE_CANCEL_FILE) {
+                    $cancelledAfterGate = Test-Path -LiteralPath $env:IDLE_MAINTENANCE_CANCEL_FILE
+                    if ($cancelledAfterGate) {
                         Write-Output "IDLE_WU|CANCELLED|Installation skipped after waiting for Chocolatey"
-                        exit 0
+                    } else {
+                        Write-Output "IDLE_WU|INSTALLING|Installation gate acquired"
+                        $installResult = $installer.Install()
+                        for ($i = 0; $i -lt $ready.Count; $i++) {
+                            $itemResult = $installResult.GetUpdateResult($i)
+                            Write-Output ("IDLE_WU|UPDATE_RESULT|" + $ready.Item($i).Title +
+                                "|code=" + $itemResult.ResultCode + ";hresult=" + $itemResult.HResult)
+                        }
+                        Write-Output ("IDLE_WU|INSTALL_RESULT|code=" + $installResult.ResultCode +
+                            ";rebootRequired=" + $installResult.RebootRequired + ";attempted=" + $ready.Count)
                     }
-                    Write-Output "IDLE_WU|INSTALLING|Installation gate acquired"
-                    $installResult = $installer.Install()
-                    for ($i = 0; $i -lt $ready.Count; $i++) {
-                        $itemResult = $installResult.GetUpdateResult($i)
-                        Write-Output ("IDLE_WU|UPDATE_RESULT|" + $ready.Item($i).Title +
-                            "|code=" + $itemResult.ResultCode + ";hresult=" + $itemResult.HResult)
-                    }
-                    Write-Output ("IDLE_WU|INSTALL_RESULT|code=" + $installResult.ResultCode +
-                        ";rebootRequired=" + $installResult.RebootRequired + ";attempted=" + $ready.Count)
                 } finally {
                     [void] $installGate.Release()
                     $installGate.Dispose()
                 }
+                if ($cancelledAfterGate) { exit 0 }
                 if ($installResult.ResultCode -ge 4) { exit 1 }
                 exit 0
             } catch {
