@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2
+
+- Přidává `ConfigVersion` přímo do `config.json`; hodnota odpovídá verzi aplikace a je ověřována při instalaci.
+- Zavádí migraci starých konfigurací bez verze, zejména pro přímý upgrade **1.3.4 → 2.0.2**, ale i z 2.0.0 a 2.0.1.
+- Doplňuje chybějící nové položky z výchozích hodnot 2.0.2 (`MaintenanceEnabled`, `OptionalDriversEnabled`, `SelfUpdateEnabled` jsou `true`), ale zachovává všechna existující a výslovně zvolená nastavení.
+- Před migrací vytváří jednorázovou zálohu `config.json.pre-2.0.2.bak`, odmítá neplatný nebo novější konfigurační soubor a zachovává pokus o rollback při selhání instalace.
+- Přidává testy migrace 1.3.4/2.0.x, zachování administrátorských voleb, opakované migrace a odmítnutí downgrade.
+
 ## 2.0.1
 
 - U **nových instalací** zapíná ve výchozí konfiguraci `MaintenanceEnabled: true` (automatická údržba Windows Update a Chocolatey).

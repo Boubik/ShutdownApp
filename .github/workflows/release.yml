@@ -77,7 +77,9 @@ jobs:
           foreach ($file in @(
             'packaging/idle-shutdown/tools/chocolateyinstall.ps1',
             'packaging/idle-shutdown/tools/chocolateyuninstall.ps1',
-            'packaging/idle-shutdown/tools/self-update.ps1'
+            'packaging/idle-shutdown/tools/self-update.ps1',
+            'packaging/idle-shutdown/tools/config-migrate.ps1',
+            'tests/ConfigMigration.Tests.ps1'
           )) {
             $tokens = $null
             $parseErrors = $null
@@ -106,6 +108,12 @@ jobs:
               throw 'Agent maintenance default mismatch.'
             }
           }
+          $packagedDefaults = Get-Content 'config.json' -Raw | ConvertFrom-Json
+          if ([string]$packagedDefaults.ConfigVersion -ne $version) {
+            throw "ConfigVersion must equal VERSION: expected $version, found $($packagedDefaults.ConfigVersion)"
+          }
+          ./tests/ConfigMigration.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Config migration regression tests failed.' }
           $helper = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
           foreach ($required in @('--version=$targetVersion',
                                    'Skipped non-stable upgrade target',
@@ -121,7 +129,8 @@ jobs:
           }
           $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
           foreach ($required in @('Set-ScheduledTask -TaskName $selfUpdateTaskName',
-                                   'Stop-InstalledAgents', 'maintenance.lock')) {
+                                   'Stop-InstalledAgents', 'maintenance.lock',
+                                   'Merge-IdleShutdownConfiguration', 'config.json.pre-')) {
             if (-not $installer.Contains($required)) {
               throw "Stable installer missing safety guard: $required"
             }
@@ -154,6 +163,13 @@ jobs:
 
               if ($null -eq $nuspecEntry) {
                   throw 'The package does not contain idle-shutdown.nuspec.'
+              }
+
+              $migrationEntry = $archive.Entries |
+                  Where-Object { $_.FullName -eq 'tools/config-migrate.ps1' } |
+                  Select-Object -First 1
+              if ($null -eq $migrationEntry) {
+                  throw 'Package does not contain config-migrate.ps1.'
               }
 
               $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())

@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $root 'packaging/idle-shutdown/tools/config-migrate.ps1')
 $defaults = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
-$target = '2.0.2'
+$target = [string]$defaults.ConfigVersion
 
 function Assert-Equal {
     param($Expected, $Actual, [string]$Name)
@@ -81,13 +81,13 @@ Assert-Equal ($migrated | ConvertTo-Json -Compress) ($again | ConvertTo-Json -Co
 
 # Reject malformed/future configuration or mismatched package metadata.
 $future = $defaults | ConvertTo-Json | ConvertFrom-Json
-$future.ConfigVersion = '3.0.0'
+$future.ConfigVersion = '999.0.0'
 Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $defaults -Existing $future -TargetVersion $target } 'future config'
 $invalid = $defaults | ConvertTo-Json | ConvertFrom-Json
 $invalid.ConfigVersion = 'unknown'
 Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $defaults -Existing $invalid -TargetVersion $target } 'invalid version'
 Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $defaults -Existing @('bad') -TargetVersion $target } 'invalid JSON root'
-Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $defaults -Existing $legacy -TargetVersion '2.0.3' } 'default/package mismatch'
+Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $defaults -Existing $legacy -TargetVersion '999.999.999' } 'default/package mismatch'
 $partial = $defaults | ConvertTo-Json | ConvertFrom-Json
 $partial.PSObject.Properties.Remove('SelfUpdateEnabled')
 Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $partial -Existing $legacy -TargetVersion $target } 'missing default'

@@ -31,6 +31,7 @@ Výchozí produkční konfigurace:
 
 ```json
 {
+  "ConfigVersion": "2.0.2",
   "IdleMinutes": 90,
   "WarningSeconds": 300,
   "CheckIntervalSeconds": 5,
@@ -70,13 +71,44 @@ Samostatný automatický aktualizátor zapisuje do
 **limit 2 MiB a dvě rotované zálohy** (`SelfUpdate.log.1` a
 `SelfUpdate.log.2`). Není nutné jej ručně mazat.
 
+## Verzování a migrace konfigurace
+
+Od verze **2.0.2** obsahuje provozní soubor `config.json` položku
+`ConfigVersion`, která odpovídá verzi právě nainstalované aplikace.
+Chocolatey při upgradu zkontroluje verzi a automaticky převede staré
+konfigurace bez této položky (například ze **1.3.4, 2.0.0 nebo 2.0.1**).
+Z původního souboru převezme všechna rozpoznaná, výslovně nastavená pole
+a chybějící hodnoty doplní z výchozí konfigurace instalovaného vydání.
+
+**Přímý upgrade 1.3.4 → 2.0.2** tedy ponechá původní `IdleMinutes`,
+`WarningSeconds`, `CheckIntervalSeconds`, `PauseWhenFullscreen` a `DryRun`;
+nové volby `MaintenanceEnabled`, `OptionalDriversEnabled` a
+`SelfUpdateEnabled` se doplní jako `true`. Vlastní Chocolatey zdroj
+se při aktualizaci z řady 2.x zachová.
+
+Pokud už existující konfigurace obsahuje `MaintenanceEnabled: false`
+nebo jiné výslovné nastavení, migrace jej **nepřepne**. Například při
+upgradu 2.0.0 → 2.0.2 zůstanou explicitní `false` zachována,
+protože nelze spolehlivě rozpoznat výchozí hodnotu od rozhodnutí správce.
+
+Instalátor před migrací vytvoří jednorázovou zálohu
+`C:\ProgramData\IdleShutdown\config.json.pre-2.0.2.bak`
+a zapíše novou konfiguraci s `ConfigVersion: "2.0.2"`.
+Neplatný, poškozený nebo novější konfigurační soubor nepřepíše.
+Při selhání instalace se pokusí vrátit původní konfiguraci.
+Parametr `/ResetConfig` i nadále znamená **úplné obnovení výchozích hodnot**,
+nikoli jen doplnění chybějících položek.
+
+První aktualizace z řady 1.3.x se provádí externě (např. Tactical RMM
+nebo Chocolatey), protože 1.3.x nemá mechanismus samoaktualizace.
+
 ## Aktualizace systému a aplikací
 
-Od verze **2.0.1** jsou na nových instalacích `MaintenanceEnabled`, `OptionalDriversEnabled` a `SelfUpdateEnabled` ve výchozím stavu **`true`**. Stávající `config.json` se při upgradu **nepřepisuje**: pokud má některý z přepínačů výslovně `false`, zůstane `false`. Změnu může správce provést parametrem instalace, ruční úpravou konfigurace nebo pomocí `/ResetConfig` (ten ale resetuje i ostatní hodnoty).
+Od verze **2.0.1** jsou na nových instalacích `MaintenanceEnabled`, `OptionalDriversEnabled` a `SelfUpdateEnabled` ve výchozím stavu **`true`**. Při upgradu se zachovávají **existující hodnoty**; od verze 2.0.2 se soubor navíc automaticky migruje a dostane verzi. Pokud má některý z přepínačů výslovně `false`, zůstane `false`. Změnu může správce provést parametrem instalace, ruční úpravou konfigurace nebo pomocí `/ResetConfig` (ten ale resetuje i ostatní hodnoty).
 
 Při `MaintenanceEnabled: true` se ihned se začátkem upozornění spustí:
 
-- **Windows Update** – aktualizace systému a podle konfigurace ovladače; volitelné ovladače jsou od verze 2.0.1 ve výchozím stavu povolené. Aktualizace vyžadující interakci uživatele se přeskočí. Aktualizace vyžadující interakci uživatele se přeskočí.
+- **Windows Update** – aktualizace systému a podle konfigurace ovladače; volitelné ovladače jsou od verze 2.0.1 ve výchozím stavu povolené. Aktualizace vyžadující interakci uživatele se přeskočí.
 - **Chocolatey** – `choco upgrade all` z konfigurací zvoleného zdroje. Balíček `idle-shutdown` je z tohoto běhu úmyslně vynechán, aby služba nepřepisovala sama sebe během instalací.
 
 Po dosažení `MaintenanceMaxMinutes` se přestanou zahajovat další části
