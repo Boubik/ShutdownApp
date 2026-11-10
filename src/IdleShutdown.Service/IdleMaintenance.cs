@@ -129,6 +129,28 @@ internal sealed class IdleMaintenance
         }
     }
 
+    public void ResetCancelledIfSafe()
+    {
+        // An earlier warning may have been cancelled while an installer was
+        // running. Once that task has exited, a NEW warning may start a
+        // fresh cycle without overlapping the previous installer.
+        lock (_sync)
+        {
+            if (_task is null || !_task.IsCompleted || !_cancelRequested)
+                return;
+
+            _task = null;
+            _completed = false;
+            _failed = false;
+            _cancelRequested = false;
+            _timedOut = false;
+            _warnedOverrun = false;
+            _settings = null;
+            Log.Debug("Maintenance: cancelled previous cycle cleared; " +
+                "a subsequent warning may start a new cycle.");
+        }
+    }
+
     public void CheckOverrun()
     {
         lock (_sync)
