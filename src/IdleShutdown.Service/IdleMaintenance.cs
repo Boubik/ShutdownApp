@@ -362,7 +362,7 @@ internal sealed class IdleMaintenance
         var counts = await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
 
         Log.Write($"Maintenance: {stage} finished; exitCode={process.ExitCode}; " +
-            $"duration={timer.Elapsed:hh\\:mm\\:ss}; stdoutLines={counts[0]}; stderrLines={counts[1]}.");
+            $"durationSeconds={timer.Elapsed.TotalSeconds:F1}; stdoutLines={counts[0]}; stderrLines={counts[1]}.");
 
         if (process.ExitCode != 0 && process.ExitCode != 2 && process.ExitCode != 3010)
             Log.Write($"Maintenance: {stage} reported an error or non-success exit code.");
