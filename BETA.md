@@ -165,45 +165,47 @@ Upload the .nupkg to the internal test feed first. Use a dedicated
 Windows lab PC. Do not try to upgrade while maintenance is running.
 
 
-## 2.0.0-beta.8 — safe opt-in self-update
+## 2.0.0-beta.8 — stable-only automatic self-update
 
-A SYSTEM Scheduled Task named 'Idle Shutdown Self Update' runs at Windows
-startup and daily at 03:00. It uses a versioned PowerShell helper stored in
-the ACL-restricted ProgramData/IdleShutdown/Updater directory (not the
-application executable folder that Chocolatey replaces).
+A detached SYSTEM task named 'Idle Shutdown Self Update' runs at boot and
+daily at 03:00, checking for a NEWER STABLE IdleShutdown release only.
+Beta, alpha and RC builds are never installed automatically. This rule is
+hard-coded: neither configuration nor a Chocolatey package parameter can
+enable prerelease self-updates. The helper never passes --pre to Chocolatey;
+it additionally validates the returned version as a strict numeric stable
+version, then pins that exact version for the upgrade.
 
-Self-update is opt-in (SelfUpdateEnabled defaults to false).
-SelfUpdateAllowPrerelease defaults to false; set it true only to test
-beta.8 -> beta.9. Once a stable version is installed, the helper ignores
-prereleases even if the old beta testing configuration remains enabled.
+SelfUpdateEnabled defaults to false. For controlled testing manually install
+beta.8 with SelfUpdateEnabled=true. The automatic test is then beta.8 ->
+stable 2.0.0, NOT beta.8 -> beta.9. Subsequent stable releases also qualify.
 
-Before an upgrade the helper verifies **no logged-in console, locked or RDP
-sessions**, checks the exclusive maintenance lock, and holds a separate
-selfupdate.lock that prevents IdleShutdown from starting maintenance or
-shutting down. Chocolatey then performs the existing guarded service/agent
-swap, with rollback on errors. The helper does not force restart Windows.
-The helper skips when a user is logged in; this is intentionally strict.
+The helper is a versioned PowerShell script stored outside Program Files in
+an ACL-restricted ProgramData/IdleShutdown/Updater directory. A SYSTEM
+scheduled task runs at Windows startup and daily at 03:00. It only upgrades
+when there are NO logged-on console, locked or RDP users, no active WUA or
+Chocolatey maintenance and no other updater. It uses selfupdate.lock while
+Chocolatey upgrades the service, whose installer already backs up files,
+stops all agents, and rolls back on failure. No reboot is requested.
 
-Because beta.7 does not contain the task, you MUST install beta.8 once
-manually. Once beta.9 is available in the internal feed, reboot the
-test machine, leave it at the sign-in screen (no users logged in),
-and inspect the self-update log after the upgrade. A daily retry also
-occurs at 03:00 for always-on machines with no logged-on users.
+Since beta.7 has no self-update task, install beta.8 ONCE manually. When
+stable 2.0.0 becomes available on the configured feed, reboot the dedicated
+test machine and leave it at the sign-in screen. The task checks the feed;
+the usual daily unattended check is a fallback. Verify with:
 
-Full beta.8 test configuration (after uploading .nupkg to the feed):
+~~~powershell
+Get-ScheduledTask -TaskName 'Idle Shutdown Self Update'
+Get-Content "$env:ProgramData\IdleShutdown\SelfUpdate.log" -Tail 80 -Wait
+choco list --limit-output
+~~~
+
+### Full beta.8 manual installation (PowerShell as Administrator)
 
 ~~~powershell
 $repo = 'https://choco.cpto.ujep.cz/nuget/choco-internal/'
-choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.8 --source="$repo" --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:true /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30 /SelfUpdateEnabled:true /SelfUpdateAllowPrerelease:true'"
-
-Get-ScheduledTask -TaskName 'Idle Shutdown Self Update'
-Get-Content "$env:ProgramData\IdleShutdown\SelfUpdate.log" -Tail 50 -Wait
+choco upgrade idle-shutdown -y --pre --version=2.0.0-beta.8 --source="$repo" --params="'/IdleMinutes:1 /WarningSeconds:30 /CheckIntervalSeconds:5 /PauseWhenFullscreen:true /DryRun:false /MaintenanceEnabled:true /WindowsUpdateEnabled:true /DriverUpdatesEnabled:true /OptionalDriversEnabled:true /ChocolateyEnabled:true /ChocolateySource:$repo /MaintenanceMaxMinutes:30 /SelfUpdateEnabled:true'"
 ~~~
 
-**Important:** Self-update is not performed inside the service's
-`choco upgrade all` task (idle-shutdown stays excluded). Self-update
-happens separately at startup or unattended daily time. If a user logs in
-just after the helper's final session check, an in-flight upgrade will be
-allowed to finish to avoid corrupting the installation; it will not
-be forcibly terminated. Automatic CI does not emulate a Windows restart
-with a real user login or a failed package rollback. Verify on a lab PC.
+Here --pre is ONLY for the administrator's one-time manual installation of
+beta.8. The SYSTEM self-updater never uses --pre; its target must be stable.
+Lab testing is still required for sessions, Windows task startup, installer
+file locks, rollback and stable promotion. Do not deploy this beta broadly.

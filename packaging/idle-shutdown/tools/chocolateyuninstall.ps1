@@ -3,6 +3,8 @@ $ErrorActionPreference = 'Stop'
 
 $serviceName = 'IdleShutdown'
 $taskName = 'Idle Shutdown Agent'
+$selfUpdateTaskName = 'Idle Shutdown Self Update'
+$selfUpdateGuardPath = Join-Path $env:ProgramData 'IdleShutdown\selfupdate.lock'
 $installDir = Join-Path $env:ProgramFiles 'IdleShutdown'
 $dataDir = Join-Path $env:ProgramData 'IdleShutdown'
 $guardPath = Join-Path $dataDir 'maintenance.lock'
@@ -45,6 +47,17 @@ catch [System.IO.IOException] {
 }
 
 try {
+    # Do not remove the service while its detached SYSTEM self-updater is running.
+    try {
+        $selfProbe = [System.IO.FileStream]::new(
+            $selfUpdateGuardPath, [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $selfProbe.Dispose()
+    }
+    catch [System.IO.IOException] {
+        throw 'IdleShutdown self-updater is running. Uninstall postponed.'
+    }
+
     # Old beta compatibility: refuse uninstall if child updaters still run.
     $services = @(Get-CimInstance Win32_Process -Filter "Name = 'IdleShutdown.Service.exe'" -ErrorAction Stop)
     $ids = @($services | ForEach-Object { [int]$_.ProcessId })
@@ -91,6 +104,12 @@ try {
 
     if (Test-Path $installDir) {
         Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction Stop
+    }
+    # This SYSTEM task must not outlive the installed software.
+    $selfTask = Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue
+    if ($null -ne $selfTask) {
+        Stop-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction Stop
     }
     Remove-SoftwareInventoryEntry
     Uninstall-BinFile -Name 'idle-shutdown-test'

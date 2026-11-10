@@ -204,8 +204,7 @@ foreach ($name in @(
     'ChocolateyEnabled',
     'ChocolateySource',
     'MaintenanceMaxMinutes',
-    'SelfUpdateEnabled',
-    'SelfUpdateAllowPrerelease'
+    'SelfUpdateEnabled'
 )) {
     $property = $defaults.PSObject.Properties[$name]
     if ($null -eq $property) {
@@ -243,7 +242,9 @@ $config.OptionalDriversEnabled = Get-BooleanParameter 'OptionalDriversEnabled' $
 $config.ChocolateyEnabled = Get-BooleanParameter 'ChocolateyEnabled' $config.ChocolateyEnabled
 $config.MaintenanceMaxMinutes = Get-PositiveIntegerParameter 'MaintenanceMaxMinutes' $config.MaintenanceMaxMinutes
 $config.SelfUpdateEnabled = Get-BooleanParameter 'SelfUpdateEnabled' $config.SelfUpdateEnabled
-$config.SelfUpdateAllowPrerelease = Get-BooleanParameter 'SelfUpdateAllowPrerelease' $config.SelfUpdateAllowPrerelease
+if ($parameters.ContainsKey('SelfUpdateAllowPrerelease')) {
+    throw 'Automatic self-updates are STABLE ONLY. /SelfUpdateAllowPrerelease is not supported.'
+}
 if ($config.MaintenanceMaxMinutes -gt 1440) { throw 'MaintenanceMaxMinutes must be 1440 or less.' }
 if ($parameters.ContainsKey('ChocolateySource')) {
     $source = [string] $parameters['ChocolateySource']

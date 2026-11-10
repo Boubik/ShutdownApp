@@ -11,6 +11,5 @@
   "ChocolateyEnabled": true,
   "ChocolateySource": null,
   "MaintenanceMaxMinutes": 120,
-  "SelfUpdateEnabled": false,
-  "SelfUpdateAllowPrerelease": false
+  "SelfUpdateEnabled": false
 }

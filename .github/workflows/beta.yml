@@ -76,10 +76,19 @@ jobs:
           }
           $externalUpdater = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
           foreach ($required in @('Test-NoLoggedOnUsers', 'selfupdate.lock', 'maintenance.lock',
-                                   "'upgrade', 'idle-shutdown'", 'SelfUpdateAllowPrerelease')) {
+                                   "'upgrade', 'idle-shutdown'", '--version=$targetVersion')) {
             if (-not $externalUpdater.Contains($required)) {
               throw "Detached helper is missing safety invariant: $required"
             }
+          }
+          if ($externalUpdater -match '(?m)\$upgradeArgs\s*\+=\s*[''"]--pre[''"]' -or
+              $externalUpdater -match '(?m)\$queryArgs\s*\+=\s*[''"]--pre[''"]' -or
+              $externalUpdater.Contains('SelfUpdateAllowPrerelease')) {
+            throw 'Automatic IdleShutdown updater MUST NEVER request prerelease packages.'
+          }
+          $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
+          if ($installer.Contains("'SelfUpdateAllowPrerelease'")) {
+            throw 'Installer must not expose a prerelease self-update configuration flag.'
           }
       - name: Run tests and build Chocolatey package
         run: .\build.bat
