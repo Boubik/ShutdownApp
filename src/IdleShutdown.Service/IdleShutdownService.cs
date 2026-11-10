@@ -1603,6 +1603,12 @@ internal sealed class IdleShutdownService : ServiceBase
 
     private static bool IsExternalUpdateGuardHeld()
     {
+        // A detached SYSTEM updater can stop/restart the service. Never
+        // shutdown the machine during its execution, even after the idle
+        // countdown expires or maintenance is disabled.
+        if (SelfUpdateGuard.IsExternalUpgradeRunning())
+            return true;
+
         try
         {
             Directory.CreateDirectory(AppConfig.BaseDirectory);

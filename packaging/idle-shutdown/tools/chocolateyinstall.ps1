@@ -10,6 +10,7 @@ $defaultConfigPath = Join-Path $payloadDir 'config.json'
 $logPath = Join-Path $dataDir 'IdleShutdown.log'
 $serviceName = 'IdleShutdown'
 $taskName = 'Idle Shutdown Agent'
+$selfUpdateTaskName = 'Idle Shutdown Self Update'
 $parameters = Get-PackageParameters
 
 function Set-SoftwareInventoryEntry {
@@ -202,7 +203,9 @@ foreach ($name in @(
     'OptionalDriversEnabled',
     'ChocolateyEnabled',
     'ChocolateySource',
-    'MaintenanceMaxMinutes'
+    'MaintenanceMaxMinutes',
+    'SelfUpdateEnabled',
+    'SelfUpdateAllowPrerelease'
 )) {
     $property = $defaults.PSObject.Properties[$name]
     if ($null -eq $property) {
@@ -239,6 +242,8 @@ $config.DriverUpdatesEnabled = Get-BooleanParameter 'DriverUpdatesEnabled' $conf
 $config.OptionalDriversEnabled = Get-BooleanParameter 'OptionalDriversEnabled' $config.OptionalDriversEnabled
 $config.ChocolateyEnabled = Get-BooleanParameter 'ChocolateyEnabled' $config.ChocolateyEnabled
 $config.MaintenanceMaxMinutes = Get-PositiveIntegerParameter 'MaintenanceMaxMinutes' $config.MaintenanceMaxMinutes
+$config.SelfUpdateEnabled = Get-BooleanParameter 'SelfUpdateEnabled' $config.SelfUpdateEnabled
+$config.SelfUpdateAllowPrerelease = Get-BooleanParameter 'SelfUpdateAllowPrerelease' $config.SelfUpdateAllowPrerelease
 if ($config.MaintenanceMaxMinutes -gt 1440) { throw 'MaintenanceMaxMinutes must be 1440 or less.' }
 if ($parameters.ContainsKey('ChocolateySource')) {
     $source = [string] $parameters['ChocolateySource']
@@ -271,6 +276,7 @@ $previousTaskXml = $null
 $oldService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 $wasServiceRunning = $null -ne $oldService -and $oldService.Status -ne 'Stopped'
 $guard = $null
+$createdSelfUpdateTask = $false
 $servicesTouched = $false
 $swapped = $false
 
@@ -402,6 +408,129 @@ if (Get-Process 'explorer' -ErrorAction SilentlyContinue) {
 
 Write-Host "Idle Shutdown installed. Configuration: $configPath"
 Write-Host "Log: $logPath"
+
+# Install an immutable helper script outside Program Files, since Chocolatey
+# must stop and replace the running application to upgrade its own package.
+# A previously registered task keeps using its existing versioned script:
+# never replace a script which might currently be running the upgrade.
+if ($config.SelfUpdateEnabled) {
+    $helperSource = Join-Path $toolsDir 'self-update.ps1'
+    if (-not (Test-Path -LiteralPath $helperSource)) {
+        throw 'The beta package is missing its detached self-update helper.'
+    }
+
+    $updaterDir = Join-Path $dataDir 'Updater'
+    New-Item -Path $updaterDir -ItemType Directory -Force | Out-Null
+
+    # Prevent unprivileged users from changing a SYSTEM-executed PowerShell
+    # script. The directory must only be writable by SYSTEM/Administrators.
+    $secureAcl = New-Object System.Security.AccessControl.DirectorySecurity
+    $secureAcl.SetAccessRuleProtection($true, $false)
+    foreach ($sidString in @('S-1-5-18', 'S-1-5-32-544')) {
+        $identity = [System.Security.Principal.SecurityIdentifier]::new($sidString)
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $identity, [System.Security.AccessControl.FileSystemRights]::FullControl,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+             [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $secureAcl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $updaterDir -AclObject $secureAcl -ErrorAction Stop
+
+    $helperVersion = [string]$env:ChocolateyPackageVersion
+    if ($helperVersion -notmatch '^2\.0\.0-(?:beta\.\d+|rc\.\d+)
+
+    # A successful upgrade can now discard the previous application binaries.
+    if (Test-Path $backupDir) {
+        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+catch {
+    $failure = $_
+    Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
+    if ($createdSelfUpdateTask) {
+        Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+
+    if ($servicesTouched) {
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+        try { Stop-InstalledAgents } catch { Write-Warning $_.Exception.Message }
+
+        # Preserve the previous version if the directory swap has started.
+        if ($swapped -or (Test-Path $backupDir)) {
+            if (Test-Path $installDir) {
+                try {
+                    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning ('Could not remove failed installation: ' + $_.Exception.Message)
+                }
+            }
+            if (Test-Path $backupDir) {
+                Move-Item -LiteralPath $backupDir -Destination $installDir -ErrorAction Stop
+                Write-Warning 'Restored previous IdleShutdown application binaries.'
+            }
+        }
+
+        if ($null -ne $previousConfig) {
+            $previousConfig | Set-Content -LiteralPath $configPath -Encoding UTF8
+        }
+        if ($previousTaskXml) {
+            try {
+                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force -ErrorAction Stop | Out-Null
+            }
+            catch { Write-Warning ('Could not restore agent task: ' + $_.Exception.Message) }
+        }
+        if ($hadExistingInstall -and $wasServiceRunning) {
+            try { Start-Service -Name $serviceName -ErrorAction Stop }
+            catch { Write-Warning ('Could not restart previous service: ' + $_.Exception.Message) }
+        }
+        if ($previousInventoryVersion) {
+            try {
+                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -Name 'DisplayVersion' -Value $previousInventoryVersion -ErrorAction Stop
+            }
+            catch { Write-Warning ('Could not restore installed version registry value: ' + $_.Exception.Message) }
+        }
+    }
+    throw $failure
+}
+finally {
+    if ($guard) { $guard.Dispose() }
+    if (Test-Path $stageDir) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+) {
+        $helperVersion = '2.0.0'
+    }
+    $helperTarget = Join-Path $updaterDir ("SelfUpdate-$helperVersion.ps1")
+    if (-not (Test-Path -LiteralPath $helperTarget)) {
+        Copy-Item -LiteralPath $helperSource -Destination $helperTarget -ErrorAction Stop
+    }
+
+    if (-not (Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue)) {
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $action = New-ScheduledTaskAction -Execute $powershell -Argument (
+            '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helperTarget + '"')
+        # Boot for prompt eventual update after an idle shutdown; daily retry
+        # covers machines that stay powered on. The helper skips all logged-on
+        # console/RDP sessions and never terminates active installers.
+        $triggers = @(
+            (New-ScheduledTaskTrigger -AtStartup),
+            (New-ScheduledTaskTrigger -Daily -At '03:00')
+        )
+        $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName $selfUpdateTaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'Safely updates Idle Shutdown at startup or during unattended daily maintenance.' -ErrorAction Stop | Out-Null
+        $createdSelfUpdateTask = $true
+        Write-Host "Created SYSTEM self-updater task: $selfUpdateTaskName"
+    }
+}
+
 
     # A successful upgrade can now discard the previous application binaries.
     if (Test-Path $backupDir) {

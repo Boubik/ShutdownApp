@@ -48,6 +48,15 @@ internal sealed class IdleMaintenance
         {
             if (_task is not null)
                 return;
+            if (SelfUpdateGuard.IsExternalUpgradeRunning())
+            {
+                if (DateTime.UtcNow - _lastGuardFailureLogUtc > TimeSpan.FromMinutes(1))
+                {
+                    Log.Write("Maintenance: start deferred; detached self-update helper is running.");
+                    _lastGuardFailureLogUtc = DateTime.UtcNow;
+                }
+                return;
+            }
             try
             {
                 Directory.CreateDirectory(AppConfig.BaseDirectory);

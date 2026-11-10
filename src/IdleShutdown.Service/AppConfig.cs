@@ -27,6 +27,9 @@ internal sealed class AppConfig
     public bool ChocolateyEnabled { get; set; } = true;
     public string? ChocolateySource { get; set; }
     public int MaintenanceMaxMinutes { get; set; } = 120;
+    // Separate SYSTEM task; defaults disabled to preserve 1.x deployments.
+    public bool SelfUpdateEnabled { get; set; } = false;
+    public bool SelfUpdateAllowPrerelease { get; set; } = false;
     public bool IsValid { get; private set; } = true;
     public string? LoadError { get; private set; }
 

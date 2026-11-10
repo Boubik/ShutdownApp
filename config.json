@@ -10,5 +10,7 @@
   "OptionalDriversEnabled": false,
   "ChocolateyEnabled": true,
   "ChocolateySource": null,
-  "MaintenanceMaxMinutes": 120
+  "MaintenanceMaxMinutes": 120,
+  "SelfUpdateEnabled": false,
+  "SelfUpdateAllowPrerelease": false
 }
