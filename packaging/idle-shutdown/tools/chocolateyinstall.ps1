@@ -104,6 +104,73 @@ function Get-BooleanParameter {
     return $parsed
 }
 
+
+function Get-InstalledAgentProcesses {
+    $agentPath = Join-Path $installDir 'IdleShutdown.Agent.exe'
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'IdleShutdown.Agent.exe'" -ErrorAction Stop)
+    foreach ($process in $processes) {
+        if (-not $process.ExecutablePath) { continue }
+        if ([string]::Equals(
+                [IO.Path]::GetFullPath([string]$process.ExecutablePath),
+                [IO.Path]::GetFullPath($agentPath),
+                [StringComparison]::OrdinalIgnoreCase)) {
+            $process
+        }
+    }
+}
+
+function Stop-InstalledAgents {
+    # The scheduled task must be removed before this function is called.
+    for ($attempt = 1; $attempt -le 15; $attempt++) {
+        $agents = @(Get-InstalledAgentProcesses)
+        if ($agents.Count -eq 0) { return }
+        foreach ($agent in $agents) {
+            Write-Host ("Stopping IdleShutdown.Agent.exe PID={0}, session={1}" -f $agent.ProcessId, $agent.SessionId)
+            Stop-Process -Id $agent.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 600
+    }
+    $remaining = @(Get-InstalledAgentProcesses)
+    if ($remaining.Count -gt 0) {
+        throw ("Cannot replace IdleShutdown.Agent.exe: {0} process(es) remain running." -f $remaining.Count)
+    }
+}
+
+function Assert-NoActiveIdleMaintenance {
+    # Compatibility check for old betas which do not hold maintenance.lock.
+    # Their Windows Update and Chocolatey processes are direct service children.
+    $services = @(Get-CimInstance Win32_Process -Filter "Name = 'IdleShutdown.Service.exe'" -ErrorAction Stop)
+    if ($services.Count -eq 0) { return }
+    $ids = @($services | ForEach-Object { [int]$_.ProcessId })
+    $children = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+        Where-Object {
+            $ids -contains [int]$_.ParentProcessId -and
+            $_.Name -in @('powershell.exe', 'pwsh.exe', 'choco.exe')
+        })
+    if ($children.Count -gt 0) {
+        $details = ($children | ForEach-Object { "$($_.Name) PID=$($_.ProcessId)" }) -join ', '
+        throw ("IdleShutdown maintenance is still running: $details. Upgrade postponed to protect running installers.")
+    }
+}
+
+function New-IdleUpdateGuard {
+    # On current versions, service owns the same file exclusively during
+    # maintenance. Keep this handle open until the install finishes.
+    New-Item $dataDir -ItemType Directory -Force | Out-Null
+    $guardPath = Join-Path $dataDir 'maintenance.lock'
+    try {
+        return [System.IO.FileStream]::new(
+            $guardPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None)
+    }
+    catch [System.IO.IOException] {
+        throw ('IdleShutdown is performing maintenance or another installation. ' +
+            'Upgrade refused; retry after all updates finish. ' + $_.Exception.Message)
+    }
+}
+
 $serviceExe = Join-Path $payloadDir 'Service\IdleShutdown.Service.exe'
 $agentExe = Join-Path $payloadDir 'Agent\IdleShutdown.Agent.exe'
 
