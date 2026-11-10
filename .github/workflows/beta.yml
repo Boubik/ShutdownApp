@@ -87,8 +87,12 @@ jobs:
             throw 'Automatic IdleShutdown updater MUST NEVER request prerelease packages.'
           }
           $installer = Get-Content 'packaging/idle-shutdown/tools/chocolateyinstall.ps1' -Raw
-          if ($installer.Contains("'SelfUpdateAllowPrerelease'")) {
-            throw 'Installer must not expose a prerelease self-update configuration flag.'
+          if ($installer.Contains('$config.SelfUpdateAllowPrerelease =')) {
+            throw 'Installer must not expose a prerelease self-update configuration option.'
+          }
+          $config = Get-Content 'config.json' -Raw
+          if ($config.Contains('SelfUpdateAllowPrerelease')) {
+            throw 'Default config must not expose a prerelease self-update option.'
           }
       - name: Run tests and build Chocolatey package
         run: .\build.bat
