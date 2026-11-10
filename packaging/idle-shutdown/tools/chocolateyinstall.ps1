@@ -409,10 +409,8 @@ if (Get-Process 'explorer' -ErrorAction SilentlyContinue) {
 Write-Host "Idle Shutdown installed. Configuration: $configPath"
 Write-Host "Log: $logPath"
 
-# Install an immutable helper script outside Program Files, since Chocolatey
-# must stop and replace the running application to upgrade its own package.
-# A previously registered task keeps using its existing versioned script:
-# never replace a script which might currently be running the upgrade.
+# A detached updater helper lives in ProgramData, not alongside the service.
+# It must not be overwritten while an updater task could be running.
 if ($config.SelfUpdateEnabled) {
     $helperSource = Join-Path $toolsDir 'self-update.ps1'
     if (-not (Test-Path -LiteralPath $helperSource)) {
@@ -422,8 +420,8 @@ if ($config.SelfUpdateEnabled) {
     $updaterDir = Join-Path $dataDir 'Updater'
     New-Item -Path $updaterDir -ItemType Directory -Force | Out-Null
 
-    # Prevent unprivileged users from changing a SYSTEM-executed PowerShell
-    # script. The directory must only be writable by SYSTEM/Administrators.
+    # SYSTEM executes this helper; explicitly prohibit standard users from
+    # replacing scripts or introducing privileged code into this directory.
     $secureAcl = New-Object System.Security.AccessControl.DirectorySecurity
     $secureAcl.SetAccessRuleProtection($true, $false)
     foreach ($sidString in @('S-1-5-18', 'S-1-5-32-544')) {
@@ -439,72 +437,7 @@ if ($config.SelfUpdateEnabled) {
     Set-Acl -LiteralPath $updaterDir -AclObject $secureAcl -ErrorAction Stop
 
     $helperVersion = [string]$env:ChocolateyPackageVersion
-    if ($helperVersion -notmatch '^2\.0\.0-(?:beta\.\d+|rc\.\d+)
-
-    # A successful upgrade can now discard the previous application binaries.
-    if (Test-Path $backupDir) {
-        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-catch {
-    $failure = $_
-    Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
-    if ($createdSelfUpdateTask) {
-        Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
-    }
-
-    if ($servicesTouched) {
-        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-        try { Stop-InstalledAgents } catch { Write-Warning $_.Exception.Message }
-
-        # Preserve the previous version if the directory swap has started.
-        if ($swapped -or (Test-Path $backupDir)) {
-            if (Test-Path $installDir) {
-                try {
-                    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction Stop
-                }
-                catch {
-                    Write-Warning ('Could not remove failed installation: ' + $_.Exception.Message)
-                }
-            }
-            if (Test-Path $backupDir) {
-                Move-Item -LiteralPath $backupDir -Destination $installDir -ErrorAction Stop
-                Write-Warning 'Restored previous IdleShutdown application binaries.'
-            }
-        }
-
-        if ($null -ne $previousConfig) {
-            $previousConfig | Set-Content -LiteralPath $configPath -Encoding UTF8
-        }
-        if ($previousTaskXml) {
-            try {
-                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force -ErrorAction Stop | Out-Null
-            }
-            catch { Write-Warning ('Could not restore agent task: ' + $_.Exception.Message) }
-        }
-        if ($hadExistingInstall -and $wasServiceRunning) {
-            try { Start-Service -Name $serviceName -ErrorAction Stop }
-            catch { Write-Warning ('Could not restart previous service: ' + $_.Exception.Message) }
-        }
-        if ($previousInventoryVersion) {
-            try {
-                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\IdleShutdown' -Name 'DisplayVersion' -Value $previousInventoryVersion -ErrorAction Stop
-            }
-            catch { Write-Warning ('Could not restore installed version registry value: ' + $_.Exception.Message) }
-        }
-    }
-    throw $failure
-}
-finally {
-    if ($guard) { $guard.Dispose() }
-    if (Test-Path $stageDir) {
-        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-) {
+    if ($helperVersion -notmatch '^2\.0\.0-(?:beta\.\d+|rc\.\d+)$') {
         $helperVersion = '2.0.0'
     }
     $helperTarget = Join-Path $updaterDir ("SelfUpdate-$helperVersion.ps1")
@@ -512,13 +445,12 @@ finally {
         Copy-Item -LiteralPath $helperSource -Destination $helperTarget -ErrorAction Stop
     }
 
+    # Register once. Keep the same immutable script during a subsequent
+    # upgrade because this task may currently be executing that script.
     if (-not (Get-ScheduledTask -TaskName $selfUpdateTaskName -ErrorAction SilentlyContinue)) {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $action = New-ScheduledTaskAction -Execute $powershell -Argument (
             '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $helperTarget + '"')
-        # Boot for prompt eventual update after an idle shutdown; daily retry
-        # covers machines that stay powered on. The helper skips all logged-on
-        # console/RDP sessions and never terminates active installers.
         $triggers = @(
             (New-ScheduledTaskTrigger -AtStartup),
             (New-ScheduledTaskTrigger -Daily -At '03:00')
@@ -540,6 +472,9 @@ finally {
 catch {
     $failure = $_
     Write-Warning ('IdleShutdown upgrade failed: ' + $failure.Exception.Message)
+    if ($createdSelfUpdateTask) {
+        Unregister-ScheduledTask -TaskName $selfUpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
 
     if ($servicesTouched) {
         Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
