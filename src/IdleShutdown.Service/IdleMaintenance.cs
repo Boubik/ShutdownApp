@@ -106,6 +106,11 @@ internal sealed class IdleMaintenance
         {
             AppConfig config;
             lock (_sync) config = _settings!;
+            Log.Debug($"Maintenance configuration: WindowsUpdate={config.WindowsUpdateEnabled}, " +
+                $"Drivers={config.DriverUpdatesEnabled}, OptionalDrivers={config.OptionalDriversEnabled}, " +
+                $"Chocolatey={config.ChocolateyEnabled}, " +
+                $"ChocolateySource={(config.ChocolateySource is null ? "system defaults" : "custom")}, " +
+                $"maxDuration={config.MaintenanceMaxMinutes} minutes.");
 
             if (config.WindowsUpdateEnabled && MayStartNextStage())
                 await RunWindowsUpdateAsync(config).ConfigureAwait(false);
@@ -128,11 +133,11 @@ internal sealed class IdleMaintenance
         {
             lock (_sync)
             {
-                _completed = false;
+                _completed = !_cancelRequested;
                 _failed = true;
             }
-            Log.Write($"Maintenance failed: {ex.GetType().Name}: {ex.Message}");
-            // Do not authorize shutdown following an unhandled maintenance error.
+            Log.Write($"Maintenance failed: {ex.GetType().Name}: {ex.Message}; " +
+                "after the active stage has exited, the existing shutdown safety checks still apply.");
         }
     }
 
@@ -146,41 +151,64 @@ internal sealed class IdleMaintenance
                 $session = New-Object -ComObject Microsoft.Update.Session
                 $searcher = $session.CreateUpdateSearcher()
                 $result = $searcher.Search("IsInstalled=0 and IsHidden=0")
+                Write-Output ("IDLE_WU|FOUND|" + $result.Updates.Count)
                 $selected = New-Object -ComObject Microsoft.Update.UpdateColl
+                $skipped = 0
+                $selectedDrivers = 0
                 foreach ($u in $result.Updates) {
-                    $isDriver = $u.Type -eq 2
-                    if ($isDriver -and $env:IDLE_DRIVER_UPDATES -ne '1') { continue }
-                    if ($isDriver -and $env:IDLE_OPTIONAL_DRIVERS -ne '1' -and $u.BrowseOnly) { continue }
-                    if (-not $isDriver -and $u.BrowseOnly) { continue }
-                    if ($u.InstallationBehavior.CanRequestUserInput) {
-                        Write-Output ("SKIP interactive update: " + $u.Title)
+                    $isDriver = [int]$u.Type -eq 2
+                    $reason = $null
+                    if ($isDriver -and $env:IDLE_DRIVER_UPDATES -ne '1') { $reason = 'drivers-disabled' }
+                    elseif ($isDriver -and $env:IDLE_OPTIONAL_DRIVERS -ne '1' -and $u.BrowseOnly) { $reason = 'optional-driver' }
+                    elseif (-not $isDriver -and $u.BrowseOnly) { $reason = 'optional-software' }
+                    elseif ($u.InstallationBehavior.CanRequestUserInput) { $reason = 'requires-user-input' }
+                    if ($reason) {
+                        $skipped++
+                        Write-Output ("IDLE_WU|SKIP|" + $reason + "|" + $u.Title)
                         continue
                     }
                     if (-not $u.EulaAccepted) { $u.AcceptEula() }
                     [void]$selected.Add($u)
-                    Write-Output ("SELECT " + $u.Title)
+                    if ($isDriver) { $selectedDrivers++ }
+                    Write-Output ("IDLE_WU|SELECT|" + $u.Title)
                 }
-                Write-Output ("Updates selected: " + $selected.Count)
-                if ($selected.Count -eq 0) { exit 0 }
+                Write-Output ("IDLE_WU|SUMMARY|selected=" + $selected.Count + ";skipped=" + $skipped + ";drivers=" + $selectedDrivers)
+                if ($selected.Count -eq 0) {
+                    Write-Output "IDLE_WU|NONE|Nothing to download or install"
+                    exit 0
+                }
                 $downloader = $session.CreateUpdateDownloader()
                 $downloader.Updates = $selected
                 $downloadResult = $downloader.Download()
-                Write-Output ("Download result: " + $downloadResult.ResultCode)
+                Write-Output ("IDLE_WU|DOWNLOAD_RESULT|code=" + $downloadResult.ResultCode)
                 $ready = New-Object -ComObject Microsoft.Update.UpdateColl
                 foreach ($u in $selected) {
-                    if ($u.IsDownloaded) { [void]$ready.Add($u) }
-                    else { Write-Output ("DOWNLOAD FAILED " + $u.Title) }
+                    if ($u.IsDownloaded) {
+                        [void]$ready.Add($u)
+                        Write-Output ("IDLE_WU|DOWNLOADED|" + $u.Title)
+                    } else {
+                        Write-Output ("IDLE_WU|DOWNLOAD_FAILED|" + $u.Title)
+                    }
                 }
-                if ($ready.Count -eq 0) { exit 1 }
+                if ($ready.Count -eq 0) {
+                    Write-Output "IDLE_WU|ERROR|No selected updates downloaded successfully"
+                    exit 1
+                }
                 $installer = $session.CreateUpdateInstaller()
                 $installer.Updates = $ready
                 $installer.AllowSourcePrompts = $false
                 $installResult = $installer.Install()
-                Write-Output ("Install result: " + $installResult.ResultCode + "; reboot required: " + $installResult.RebootRequired)
+                for ($i = 0; $i -lt $ready.Count; $i++) {
+                    $itemResult = $installResult.GetUpdateResult($i)
+                    Write-Output ("IDLE_WU|UPDATE_RESULT|" + $ready.Item($i).Title +
+                        "|code=" + $itemResult.ResultCode + ";hresult=" + $itemResult.HResult)
+                }
+                Write-Output ("IDLE_WU|INSTALL_RESULT|code=" + $installResult.ResultCode +
+                    ";rebootRequired=" + $installResult.RebootRequired + ";attempted=" + $ready.Count)
                 if ($installResult.ResultCode -ge 4) { exit 1 }
                 exit 0
             } catch {
-                Write-Error $_
+                Write-Output ("IDLE_WU|ERROR|" + $_.Exception.Message)
                 exit 1
             }
             """;
