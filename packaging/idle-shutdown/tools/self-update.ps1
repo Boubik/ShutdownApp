@@ -157,7 +157,11 @@ try {
         return
     }
 
-    $allowPre = $config.SelfUpdateAllowPrerelease -eq $true
+    $installedCurrent = Get-InstalledVersion -Choco $choco
+    # Once a stable version is installed, never enroll it in future beta
+    # updates merely because the former test config still permits prereleases.
+    $allowPre = $config.SelfUpdateAllowPrerelease -eq $true -and
+        $installedCurrent -match '-(?:beta|rc)[.]'
     $source = [string]$config.ChocolateySource
     if ($source -and $source -notmatch '^https?://[^ ]+$') {
         Write-SelfUpdateLog 'Invalid custom Chocolatey source; self-upgrade skipped.'

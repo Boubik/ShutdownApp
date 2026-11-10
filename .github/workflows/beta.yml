@@ -46,7 +46,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           foreach ($file in @(
             'packaging/idle-shutdown/tools/chocolateyinstall.ps1',
-            'packaging/idle-shutdown/tools/chocolateyuninstall.ps1'
+            'packaging/idle-shutdown/tools/chocolateyuninstall.ps1',
+            'packaging/idle-shutdown/tools/self-update.ps1'
           )) {
             $tokens = $null
             $parseErrors = $null
@@ -73,6 +74,13 @@ jobs:
           if (-not $updater.Contains('maintenance.lock')) {
             throw 'Service must hold the maintenance lock during updates.'
           }
+          $externalUpdater = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
+          foreach ($required in @('Test-NoLoggedOnUsers', 'selfupdate.lock', 'maintenance.lock',
+                                   "'upgrade', 'idle-shutdown'", 'SelfUpdateAllowPrerelease')) {
+            if (-not $externalUpdater.Contains($required)) {
+              throw "Detached helper is missing safety invariant: $required"
+            }
+          }
       - name: Run tests and build Chocolatey package
         run: .\build.bat
       - name: Check package version
@@ -89,6 +97,8 @@ jobs:
             $reader = [System.IO.StreamReader]::new($entry.Open())
             try { [xml]$doc = $reader.ReadToEnd() } finally { $reader.Dispose() }
             if ($doc.package.metadata.version -ne $env:EXPECTED) { throw 'Incorrect package version' }
+            $helper = $zip.Entries | Where-Object FullName -eq 'tools/self-update.ps1' | Select-Object -First 1
+            if ($null -eq $helper) { throw 'Chocolatey package is missing detached self-update helper' }
           } finally { $zip.Dispose() }
       - uses: actions/upload-artifact@v4
         with:
