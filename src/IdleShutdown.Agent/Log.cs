@@ -23,8 +23,14 @@ internal static class Log
             Directory.CreateDirectory(AppConfig.BaseDirectory);
             lock (Sync)
             {
-                File.AppendAllText(AppConfig.LogPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [AGENT:{Environment.UserName}] {message}{Environment.NewLine}");
+                using var stream = new FileStream(
+                    AppConfig.LogPath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.ReadWrite | FileShare.Delete);
+                using var writer = new StreamWriter(stream);
+                writer.WriteLine(
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [AGENT:{Environment.UserName}] {message}");
             }
         }
         catch { }

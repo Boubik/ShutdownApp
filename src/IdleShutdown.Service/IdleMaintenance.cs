@@ -14,6 +14,7 @@ internal sealed class IdleMaintenance
     private bool _warnedOverrun;
     private bool _failed;
     private bool _timedOut;
+    private DateTime _nextHeartbeatUtc;
     private DateTime _startedUtc;
     private AppConfig? _settings;
 
@@ -44,6 +45,7 @@ internal sealed class IdleMaintenance
             _failed = false;
             _timedOut = false;
             _startedUtc = DateTime.UtcNow;
+            _nextHeartbeatUtc = _startedUtc.AddMinutes(1);
             _settings = config;
             _task = Task.Run(RunAsync);
             Log.Write("Maintenance: cycle started.");
@@ -82,9 +84,21 @@ internal sealed class IdleMaintenance
     {
         lock (_sync)
         {
-            if (_task is not { IsCompleted: false } || _settings is null || _warnedOverrun)
+            if (_task is not { IsCompleted: false } || _settings is null)
                 return;
-            if (DateTime.UtcNow - _startedUtc <= TimeSpan.FromMinutes(_settings.MaintenanceMaxMinutes))
+
+            var now = DateTime.UtcNow;
+            if (Log.DebugEnabled && now >= _nextHeartbeatUtc)
+            {
+                Log.Debug($"Maintenance heartbeat: running for " +
+                    $"{(now - _startedUtc).TotalMinutes:F1} minute(s), " +
+                    $"maximum configured duration {_settings.MaintenanceMaxMinutes} minute(s); " +
+                    "waiting for active update operation.");
+                _nextHeartbeatUtc = now.AddMinutes(1);
+            }
+
+            if (_warnedOverrun ||
+                now - _startedUtc <= TimeSpan.FromMinutes(_settings.MaintenanceMaxMinutes))
                 return;
             _warnedOverrun = true;
             _timedOut = true;
