@@ -4,6 +4,15 @@ using IdleShutdown.Shared;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("maintenance starts with warning, and countdown alone never authorizes shutdown", () =>
+    {
+        Expect(true, WarningMaintenancePolicy.StartDuringWarning(true, false));
+        Expect(false, WarningMaintenancePolicy.StartDuringWarning(false, false));
+        Expect(false, WarningMaintenancePolicy.StartDuringWarning(true, true));
+        Expect(false, WarningMaintenancePolicy.InteractiveShutdownConfirmed(false));
+        Expect(true, WarningMaintenancePolicy.InteractiveShutdownConfirmed(true));
+    }),
+
     ("maintenance keeps warning visible after countdown reaches zero", () =>
     {
         Expect(true, WarningDisplayPolicy.ShouldRemainVisibleAtZero(true));

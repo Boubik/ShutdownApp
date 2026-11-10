@@ -109,7 +109,9 @@ internal sealed class WarningForm : Form
             ForeColor = _palette.SecondaryText,
             Location = new Point(120, 75),
             Size = new Size(408, 50),
-            Text = _ui.Status
+            Text = _keepOpenForMaintenance
+                ? _ui.MaintenancePreWarningStatus
+                : _ui.Status
         };
 
         card.Controls.Add(_statusLabel);

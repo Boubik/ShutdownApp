@@ -32,6 +32,9 @@
       Include="..\..\src\IdleShutdown.Service\InteractiveSessionPolicy.cs"
       Link="InteractiveSessionPolicy.cs" />
     <Compile
+      Include="..\..\src\IdleShutdown.Service\WarningMaintenancePolicy.cs"
+      Link="WarningMaintenancePolicy.cs" />
+    <Compile
       Include="..\..\src\IdleShutdown.Service\WarningCoordinationPolicy.cs"
       Link="WarningCoordinationPolicy.cs" />
     <Compile
