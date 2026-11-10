@@ -1373,7 +1373,13 @@ internal sealed class IdleShutdownService : ServiceBase
         // Maintenance begins with the warning and its watchdog must remain
         // active even while the visible countdown still has time remaining.
         if (config.MaintenanceEnabled)
+        {
+            // If a user cancelled an earlier warning while installers were
+            // finishing, retry only once the previous task has fully exited.
+            _maintenance.ResetCancelledIfSafe();
+            _maintenance.BeginIfNeeded(config);
             _maintenance.CheckOverrun();
+        }
 
         if (DateTime.UtcNow < pending.ExecuteAtUtc)
         {

@@ -136,7 +136,8 @@ internal sealed class IdleMaintenance
         // fresh cycle without overlapping the previous installer.
         lock (_sync)
         {
-            if (_task is null || !_task.IsCompleted || !_cancelRequested)
+            if (_task is null || !_task.IsCompleted || !_cancelRequested ||
+                _completed)
                 return;
 
             _task = null;
