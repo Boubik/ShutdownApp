@@ -189,52 +189,9 @@ try {
         Write-SelfUpdateLog 'No newer stable idle-shutdown package available.'
         return
     }
-    # Guard against a misconfigured/malicious feed returning beta or rc
-    # even without --pre. Reject ANY non-stable target rather than rely
-    # only on Chocolatey's channel selection.
-    if ($targetVersion -notmatch '^[0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?
-
-    # Revalidate just before touching running services. If the machine became
-    # occupied, no upgrade starts. Never terminate a running WUA installer.
-    if (-not (Test-NoLoggedOnUsers) -or
-        @(Get-Process explorer -ErrorAction SilentlyContinue).Count -gt 0) {
-        Write-SelfUpdateLog 'Upgrade postponed: user logged on during update check.'
-        return
-    }
-    try {
-        $probe = [IO.FileStream]::new(
-            $maintenanceLockPath, [IO.FileMode]::OpenOrCreate,
-            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-        $probe.Dispose()
-    }
-    catch {
-        Write-SelfUpdateLog 'Upgrade postponed: idle maintenance started during update check.'
-        return
-    }
-
-    Write-SelfUpdateLog ("Upgrade available: $currentVersion -> $targetVersion; starting detached Chocolatey installer.")
-    # Pin the exact VERIFIED stable version. Never add --pre.
-    $upgradeArgs = @('upgrade', 'idle-shutdown', '-y', '--no-progress',
-                     "--version=$targetVersion")
-    if ($source) { $upgradeArgs += @('--source', $source) }
-
-    # This is a separate SYSTEM scheduled task, not a thread in IdleShutdown.
-    # The Chocolatey package performs a guarded/rollback-capable service swap.
-    & $choco @upgradeArgs *> $null
-    $upgradeExit = $LASTEXITCODE
-
-    $installed = $null
-    try { $installed = Get-InstalledVersion -Choco $choco }
-    catch { Write-SelfUpdateLog ('Version verification failed: ' + $_.Exception.Message) }
-    Write-SelfUpdateLog ("Upgrade finished: exitCode=$upgradeExit; installedVersion=$installed; targetVersion=$targetVersion.")
-}
-catch {
-    Write-SelfUpdateLog ('Self-upgrade failed safely: ' + $_.Exception.Message)
-}
-finally {
-    if ($selfLock) { $selfLock.Dispose() }
-}
-) {
+    # The remote feed may be misconfigured. This strict allow-list ensures
+    # prerelease versions are NEVER eligible for automatic self-update.
+    if ($targetVersion -notmatch '^[0-9]+[.][0-9]+[.][0-9]+(?:[.][0-9]+)?$') {
         Write-SelfUpdateLog ("Skipped non-stable upgrade target: $targetVersion")
         return
     }
@@ -257,12 +214,13 @@ finally {
         return
     }
 
-    Write-SelfUpdateLog ("Upgrade available: $currentVersion -> $targetVersion; starting detached Chocolatey installer.")
-    $upgradeArgs = @('upgrade', 'idle-shutdown', '-y', '--no-progress')
-    if ($allowPre) { $upgradeArgs += '--pre' }
+    Write-SelfUpdateLog ("Stable upgrade available: $currentVersion -> $targetVersion; starting detached Chocolatey installer.")
+    # Pin the exact verified stable version, without --pre.
+    $upgradeArgs = @('upgrade', 'idle-shutdown', '-y', '--no-progress',
+                     "--version=$targetVersion")
     if ($source) { $upgradeArgs += @('--source', $source) }
 
-    # This is a separate SYSTEM scheduled task, not a thread in IdleShutdown.
+    # This is a separate SYSTEM scheduled task, not an IdleShutdown thread.
     # The Chocolatey package performs a guarded/rollback-capable service swap.
     & $choco @upgradeArgs *> $null
     $upgradeExit = $LASTEXITCODE
