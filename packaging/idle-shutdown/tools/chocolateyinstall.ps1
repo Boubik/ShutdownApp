@@ -376,6 +376,13 @@ finally {
 
 Install-BinFile -Name 'idle-shutdown-test' -Path (Join-Path $toolsDir 'idle-shutdown-test.cmd')
 Start-Service $serviceName
+(Get-Service -Name $serviceName).WaitForStatus(
+    [System.ServiceProcess.ServiceControllerStatus]::Running,
+    [TimeSpan]::FromSeconds(30))
+Start-Sleep -Seconds 1
+if ((Get-Service -Name $serviceName).Status -ne 'Running') {
+    throw 'The upgraded IdleShutdown service did not remain running; restoring the previous version.'
+}
 Set-SoftwareInventoryEntry -InstalledAgentExe $installedAgentExe
 
 # A logon trigger created during an already active session does not fire
