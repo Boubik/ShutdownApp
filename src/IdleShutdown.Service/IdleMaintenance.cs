@@ -25,6 +25,7 @@ internal sealed class IdleMaintenance
     private DateTime _nextHeartbeatUtc;
     private DateTime _startedUtc;
     private AppConfig? _settings;
+    private string? _cancelMarkerPath;
 
     public bool Running
     {
@@ -82,6 +83,9 @@ internal sealed class IdleMaintenance
             _startedUtc = DateTime.UtcNow;
             _nextHeartbeatUtc = _startedUtc.AddMinutes(1);
             _settings = config;
+            _cancelMarkerPath = Path.Combine(
+                AppConfig.BaseDirectory,
+                "maintenance-cancel-" + Guid.NewGuid().ToString("N") + ".flag");
             _task = Task.Run(async () =>
             {
                 try
@@ -92,6 +96,14 @@ internal sealed class IdleMaintenance
                 {
                     lock (_sync)
                     {
+                        try
+                        {
+                            if (_cancelMarkerPath is not null &&
+                                File.Exists(_cancelMarkerPath))
+                                File.Delete(_cancelMarkerPath);
+                        }
+                        catch (IOException) { }
+                        catch (UnauthorizedAccessException) { }
                         _maintenanceGuard?.Dispose();
                         _maintenanceGuard = null;
                     }
@@ -111,6 +123,7 @@ internal sealed class IdleMaintenance
             _cancelRequested = true;
             _timedOut = false;
             _completed = false;
+            MarkChildCancellation();
             // Keep the current Task reference until it exits, to prevent overlap.
         }
     }
@@ -147,6 +160,7 @@ internal sealed class IdleMaintenance
             _timedOut = false;
             _warnedOverrun = false;
             _settings = null;
+            _cancelMarkerPath = null;
             Log.Debug("Maintenance: cancelled previous cycle cleared; " +
                 "a subsequent warning may start a new cycle.");
         }
@@ -175,7 +189,23 @@ internal sealed class IdleMaintenance
             _warnedOverrun = true;
             _timedOut = true;
             _cancelRequested = true;
+            MarkChildCancellation();
             Log.Write("Maintenance: maximum duration exceeded; no more stages will start. Waiting for active installer (never force-kill).");
+        }
+    }
+
+    private void MarkChildCancellation()
+    {
+        // Called under _sync; the WUA PowerShell child inspects this marker at
+        // safe boundaries so it can skip INSTALL after a cancelled download.
+        try
+        {
+            if (_cancelMarkerPath is not null)
+                File.WriteAllText(_cancelMarkerPath, "cancel");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Write($"Maintenance: could not signal child cancellation: {ex.GetType().Name}.");
         }
     }
 
@@ -191,7 +221,12 @@ internal sealed class IdleMaintenance
         try
         {
             AppConfig config;
-            lock (_sync) config = _settings!;
+            string cancellationPath;
+            lock (_sync)
+            {
+                config = _settings!;
+                cancellationPath = _cancelMarkerPath!;
+            }
             Log.Debug($"Maintenance configuration: WindowsUpdate={config.WindowsUpdateEnabled}, " +
                 $"Drivers={config.DriverUpdatesEnabled}, OptionalDrivers={config.OptionalDriversEnabled}, " +
                 $"Chocolatey={config.ChocolateyEnabled}, " +
@@ -203,10 +238,10 @@ internal sealed class IdleMaintenance
             // via the same cross-process semaphore to avoid MSI conflicts.
             var tasks = new List<Task>(2);
             if (config.WindowsUpdateEnabled && MayStartNextStage())
-                tasks.Add(RunWindowsUpdateAsync(config));
+                tasks.Add(RunWindowsUpdateAsync(config, cancellationPath));
 
             if (config.ChocolateyEnabled && MayStartNextStage())
-                tasks.Add(RunChocolateyAsync(config));
+                tasks.Add(RunChocolateyAsync(config, cancellationPath));
 
             Log.Write($"Maintenance: {tasks.Count} update stage(s) started independently; " +
                 "shutdown will wait until every stage exits.");
@@ -235,7 +270,7 @@ internal sealed class IdleMaintenance
         }
     }
 
-    private static async Task RunWindowsUpdateAsync(AppConfig config)
+    private static async Task RunWindowsUpdateAsync(AppConfig config, string cancellationPath)
     {
         // Windows Update Agent API, executed within LocalSystem, without a desktop prompt.
         // Optional drivers are opt-in. This API does not request a system reboot.
@@ -273,6 +308,10 @@ internal sealed class IdleMaintenance
                     Write-Output "IDLE_WU|NONE|Nothing to download or install"
                     exit 0
                 }
+                if (Test-Path -LiteralPath $env:IDLE_MAINTENANCE_CANCEL_FILE) {
+                    Write-Output "IDLE_WU|CANCELLED|Update download skipped after user activity"
+                    exit 0
+                }
                 $downloader = $session.CreateUpdateDownloader()
                 $downloader.Updates = $selected
                 $downloadResult = $downloader.Download()
@@ -290,6 +329,10 @@ internal sealed class IdleMaintenance
                     Write-Output "IDLE_WU|ERROR|No selected updates downloaded successfully"
                     exit 1
                 }
+                if (Test-Path -LiteralPath $env:IDLE_MAINTENANCE_CANCEL_FILE) {
+                    Write-Output "IDLE_WU|CANCELLED|Installation skipped after download"
+                    exit 0
+                }
                 $installer = $session.CreateUpdateInstaller()
                 $installer.Updates = $ready
                 $installer.AllowSourcePrompts = $false
@@ -302,6 +345,10 @@ internal sealed class IdleMaintenance
                 Write-Output "IDLE_WU|WAITING_FOR_INSTALL_GATE|Chocolatey may still be installing"
                 [void] $installGate.WaitOne()
                 try {
+                    if (Test-Path -LiteralPath $env:IDLE_MAINTENANCE_CANCEL_FILE) {
+                        Write-Output "IDLE_WU|CANCELLED|Installation skipped after waiting for Chocolatey"
+                        exit 0
+                    }
                     Write-Output "IDLE_WU|INSTALLING|Installation gate acquired"
                     $installResult = $installer.Install()
                     for ($i = 0; $i -lt $ready.Count; $i++) {
@@ -334,10 +381,11 @@ internal sealed class IdleMaintenance
         };
         psi.Environment["IDLE_DRIVER_UPDATES"] = config.DriverUpdatesEnabled ? "1" : "0";
         psi.Environment["IDLE_OPTIONAL_DRIVERS"] = config.OptionalDriversEnabled ? "1" : "0";
+        psi.Environment["IDLE_MAINTENANCE_CANCEL_FILE"] = cancellationPath;
         await RunProcessAsync("Windows Update", psi).ConfigureAwait(false);
     }
 
-    private static async Task RunChocolateyAsync(AppConfig config)
+    private async Task RunChocolateyAsync(AppConfig config, string cancellationPath)
     {
         var home = Environment.GetEnvironmentVariable("ChocolateyInstall");
         var executable = !string.IsNullOrWhiteSpace(home)
@@ -353,6 +401,11 @@ internal sealed class IdleMaintenance
         // Chocolatey 2.x 'list --limit-output' is a local package inventory.
         // Record version changes, never unfiltered installer output (which may contain secrets).
         var before = await ReadChocolateyInventoryAsync(executable).ConfigureAwait(false);
+        if (File.Exists(cancellationPath) || !MayStartNextStage())
+        {
+            Log.Write("Maintenance: Chocolatey upgrade skipped after cancellation.");
+            return;
+        }
 
         var psi = new ProcessStartInfo
         {
@@ -379,6 +432,11 @@ internal sealed class IdleMaintenance
         int code;
         try
         {
+            if (File.Exists(cancellationPath) || !MayStartNextStage())
+            {
+                Log.Write("Maintenance: Chocolatey installation skipped after cancellation.");
+                return;
+            }
             Log.Debug("Chocolatey acquired installer gate; starting upgrade.");
             code = await RunProcessAsync("Chocolatey", psi).ConfigureAwait(false);
         }
