@@ -128,7 +128,14 @@ foreach ($name in @(
     'WarningSeconds',
     'CheckIntervalSeconds',
     'PauseWhenFullscreen',
-    'DryRun'
+    'DryRun',
+    'MaintenanceEnabled',
+    'WindowsUpdateEnabled',
+    'DriverUpdatesEnabled',
+    'OptionalDriversEnabled',
+    'ChocolateyEnabled',
+    'ChocolateySource',
+    'MaintenanceMaxMinutes'
 )) {
     $property = $defaults.PSObject.Properties[$name]
     if ($null -eq $property) {
@@ -159,6 +166,24 @@ $config.WarningSeconds = Get-PositiveIntegerParameter 'WarningSeconds' $config.W
 $config.CheckIntervalSeconds = Get-PositiveIntegerParameter 'CheckIntervalSeconds' $config.CheckIntervalSeconds
 $config.PauseWhenFullscreen = Get-BooleanParameter 'PauseWhenFullscreen' $config.PauseWhenFullscreen
 $config.DryRun = Get-BooleanParameter 'DryRun' $config.DryRun
+$config.MaintenanceEnabled = Get-BooleanParameter 'MaintenanceEnabled' $config.MaintenanceEnabled
+$config.WindowsUpdateEnabled = Get-BooleanParameter 'WindowsUpdateEnabled' $config.WindowsUpdateEnabled
+$config.DriverUpdatesEnabled = Get-BooleanParameter 'DriverUpdatesEnabled' $config.DriverUpdatesEnabled
+$config.OptionalDriversEnabled = Get-BooleanParameter 'OptionalDriversEnabled' $config.OptionalDriversEnabled
+$config.ChocolateyEnabled = Get-BooleanParameter 'ChocolateyEnabled' $config.ChocolateyEnabled
+$config.MaintenanceMaxMinutes = Get-PositiveIntegerParameter 'MaintenanceMaxMinutes' $config.MaintenanceMaxMinutes
+if ($config.MaintenanceMaxMinutes -gt 1440) { throw 'MaintenanceMaxMinutes must be 1440 or less.' }
+if ($parameters.ContainsKey('ChocolateySource')) {
+    $source = [string] $parameters['ChocolateySource']
+    $config.ChocolateySource = if ([string]::IsNullOrWhiteSpace($source)) { $null } else { $source.Trim() }
+}
+if (-not [string]::IsNullOrWhiteSpace([string] $config.ChocolateySource)) {
+    $uri = $null
+    if (-not [Uri]::TryCreate([string] $config.ChocolateySource, [UriKind]::Absolute, [ref] $uri) -or
+        $uri.Scheme -notin @('https', 'http')) {
+        throw 'ChocolateySource must be a valid HTTP(S) URL.'
+    }
+}
 
 foreach ($removedParameter in @('LockedMinutes', 'NoUserMinutes')) {
     if ($parameters.ContainsKey($removedParameter)) {
