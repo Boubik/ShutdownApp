@@ -79,7 +79,8 @@ jobs:
             'packaging/idle-shutdown/tools/chocolateyuninstall.ps1',
             'packaging/idle-shutdown/tools/self-update.ps1',
             'packaging/idle-shutdown/tools/config-migrate.ps1',
-            'tests/ConfigMigration.Tests.ps1'
+            'tests/ConfigMigration.Tests.ps1',
+            'tests/SelfUpdateRecovery.Tests.ps1'
           )) {
             $tokens = $null
             $parseErrors = $null
@@ -117,6 +118,8 @@ jobs:
           }
           ./tests/ConfigMigration.Tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Config migration regression tests failed.' }
+          ./tests/SelfUpdateRecovery.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Self-update recovery regression tests failed.' }
           $helper = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
           foreach ($required in @('--version=$targetVersion',
                                    'Skipped non-stable upgrade target',
@@ -134,10 +137,17 @@ jobs:
           foreach ($required in @('Set-ScheduledTask -TaskName $selfUpdateTaskName',
                                    'Stop-InstalledAgents', 'maintenance.lock',
                                    'Merge-IdleShutdownConfiguration', 'config.json.pre-',
-                                   'SelfUpdate-$helperVersion.ps1')) {
+                                   'SelfUpdate-$helperVersion.ps1',
+                                   'Save-IdleShutdownConfiguration')) {
             if (-not $installer.Contains($required)) {
               throw "Stable installer missing safety guard: $required"
             }
+          }
+          $migrationWriter = Get-Content 'packaging/idle-shutdown/tools/config-migrate.ps1' -Raw
+          if (-not $migrationWriter.Contains('File]::Replace(') -or
+              -not $migrationWriter.Contains('$swapBackupPath') -or
+              $installer.Contains('File]::Replace($configTempPath, $configPath, $null)')) {
+            throw 'Installer must use verified atomic config save, not File.Replace with null backup.'
           }
       - name: Run tests and build Windows package
         run: .\build.bat

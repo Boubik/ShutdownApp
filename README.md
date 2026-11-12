@@ -31,7 +31,7 @@ Výchozí produkční konfigurace:
 
 ```json
 {
-  "ConfigVersion": "2.0.2",
+  "ConfigVersion": "2.0.4",
   "IdleMinutes": 90,
   "WarningSeconds": 300,
   "CheckIntervalSeconds": 5,
@@ -146,6 +146,29 @@ Pokud se `SelfUpdate.log` ještě nevytvořil, nemusí to být chyba: vzniká
 při prvním diagnostickém zápisu pomocné úlohy. Automatické vydání na GitHub
 **nenahrává balíček do interního Chocolatey repozitáře**; do vlastního feedu
 jej musí nejprve publikovat správce.
+
+### Oprava přerušené samoaktualizace od 2.0.4
+
+Při přerušení instalace (například restartem Windows) může Chocolatey
+zaevidovat novější verzi, ale v `C:\Program Files\IdleShutdown` stále
+zůstanou staré EXE. Od **2.0.4** proto SYSTEM aktualizátor porovnává
+evidenci Chocolatey se **skutečnou verzí souborů Agent.exe a Service.exe**,
+a u vydání 2.0.2+ i s `ConfigVersion` a verzí aktualizační úlohy.
+Při nesouladu automaticky použije opravnou instalaci
+`choco upgrade idle-shutdown --force --version=<stable>` při další
+bezobslužné kontrole, pouze bez přihlášeného uživatele a probíhající údržby.
+
+Zápis `VERIFIED complete` v `SelfUpdate.log` vyžaduje souhlas **všech**
+částí; pokud se verze liší, zaznamená se `INCOMPLETE` a úloha vrátí
+nenulový výsledek. Volitelné aktualizace systému s čekajícím restartem
+mají přednost, samotná opravná instalace se odloží.
+
+Verze **2.0.2 a 2.0.3 měly chybu** při atomickém ukládání
+`config.json` (`File.Replace` s neplatnou záložní cestou), která
+mohla způsobit selhání upgradu ještě před dokončením migrace konfigurace.
+Oprava 2.0.4 vytváří platný dočasný záložní soubor a má Windows regresní
+test skutečné výměny existující konfigurace. Zachovává také trvalou
+zálohu `config.json.pre-2.0.4.bak`.
 
 ## Sestavení
 
