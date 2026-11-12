@@ -22,6 +22,8 @@ jobs:
           dotnet-version: 8.0.x
       - name: Test interrupted-upgrade recovery logic on Windows
         run: ./tests/SelfUpdateRecovery.Tests.ps1
+      - name: Test config migration and actual atomic save
+        run: ./tests/ConfigMigration.Tests.ps1
       - name: Run service and agent regression tests
         run: dotnet run --project tests/IdleShutdown.LogicTests/IdleShutdown.LogicTests.csproj -c Release
       - name: Compile updater and service artifacts
