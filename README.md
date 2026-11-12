@@ -121,9 +121,22 @@ použije nakonfigurované zdroje v Chocolatey.
 
 `SelfUpdateEnabled: true` povolí **oddělenou naplánovanou úlohu pod SYSTEM** (u nových instalací od verze 2.0.1 je zapnuta standardně)
 s názvem `Idle Shutdown Self Update`. Ta kontroluje novější vydání při
-startu Windows a denně ve **3:00**. Kontrolu přeskočí, pokud je někdo
-přihlášen (včetně zamčené nebo odpojené RDP relace), probíhají aktualizace
-nebo již běží jiný self-updater. Není součástí probíhající údržby.
+startu Windows a denně ve **3:00**.
+
+**Od verze 2.0.6 může aktualizace během prvních 20 minut po reálném startu
+Windows proběhnout i s přihlášeným uživatelem (včetně RDP).** Nemusíte se
+odhlašovat ani čekat na přihlašovací obrazovku. Pokud není novější
+stabilní verze, pomocná úloha skončí bez zásahu. Po vypršení 20 minut
+zůstává denní kontrola ve 3:00 konzervativní: při přihlášeném uživateli
+aktualizaci odloží. Nepodaří-li se ověřit čas startu Windows, použije
+stejné bezpečné odložení.
+
+Samoaktualizace **neodhlašuje uživatelské relace, neukončuje uživatelské
+aplikace a sama nerestartuje Windows**. Instalátor na nezbytnou dobu ukončí
+pouze agenta a službu IdleShutdown, které po upgradu obnoví.
+Pořád odmítá zahájit instalaci při probíhající údržbě Windows Update nebo
+Chocolatey, při čekajícím systémovém restartu a při již probíhající
+samoaktualizaci. Není součástí interaktivního odpočtu vypnutí.
 
 **Automatická samoaktualizace přijímá výhradně stabilní verze** (např.
 `2.0.0`, `2.0.1`), nikoliv `beta`, `alpha` ani `rc`. Neexistuje
@@ -156,7 +169,9 @@ evidenci Chocolatey se **skutečnou verzí souborů Agent.exe a Service.exe**,
 a u vydání 2.0.2+ i s `ConfigVersion` a verzí aktualizační úlohy.
 Při nesouladu automaticky použije opravnou instalaci
 `choco upgrade idle-shutdown --force --version=<stable>` při další
-bezobslužné kontrole, pouze bez přihlášeného uživatele a probíhající údržby.
+bezpečné kontrole. Od verze 2.0.6 je oprava možná i s přihlášeným uživatelem
+během 20minutového okna po startu Windows; při běžné noční kontrole se
+přihlášené relace stále respektují. Běžící údržba se nepřerušuje.
 
 Zápis `VERIFIED complete` v `SelfUpdate.log` vyžaduje souhlas **všech**
 částí; pokud se verze liší, zaznamená se `INCOMPLETE` a úloha vrátí

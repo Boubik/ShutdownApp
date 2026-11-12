@@ -80,7 +80,8 @@ jobs:
             'packaging/idle-shutdown/tools/self-update.ps1',
             'packaging/idle-shutdown/tools/config-migrate.ps1',
             'tests/ConfigMigration.Tests.ps1',
-            'tests/SelfUpdateRecovery.Tests.ps1'
+            'tests/SelfUpdateRecovery.Tests.ps1',
+            'tests/BootSelfUpdate.Tests.ps1'
           )) {
             $tokens = $null
             $parseErrors = $null
@@ -120,6 +121,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Config migration regression tests failed.' }
           ./tests/SelfUpdateRecovery.Tests.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Self-update recovery regression tests failed.' }
+          ./tests/BootSelfUpdate.Tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Post-boot RDP self-update regression tests failed.' }
           $helper = Get-Content 'packaging/idle-shutdown/tools/self-update.ps1' -Raw
           foreach ($required in @('--version=$targetVersion',
                                    'Skipped non-stable upgrade target',
