@@ -158,6 +158,21 @@ function Test-SessionSafeForUpdate {
     return @(Get-Process explorer -ErrorAction SilentlyContinue).Count -eq 0
 }
 
+# Parse ALL outdated packages, then select exactly our package ID.
+# Chocolatey outdated has no positional package-name filter.
+function Get-IdleShutdownOutdatedResult {
+    param([AllowNull()] [object[]] $Lines)
+    foreach ($line in @($Lines)) {
+        if ([string]$line -match '^idle-shutdown\|([^|]+)\|([^|]+)(?:\||$)') {
+            return [pscustomobject]@{
+                Current = $Matches[1].Trim()
+                Available = $Matches[2].Trim()
+            }
+        }
+    }
+    return $null
+}
+
 function Get-InstalledVersion {
     param([string]$Choco)
     $lines = & $Choco list --limit-output 2>$null
@@ -327,15 +342,9 @@ try {
         return
     }
 
-    $targetVersion = $null
-    $currentVersion = $null
-    foreach ($line in $output) {
-        if ($line -match '^idle-shutdown\|([^|]+)\|([^|]+)(?:\||$)') {
-            $currentVersion = $Matches[1].Trim()
-            $targetVersion = $Matches[2].Trim()
-            break
-        }
-    }
+    $result = Get-IdleShutdownOutdatedResult -Lines $output
+    $currentVersion = if ($null -ne $result) { $result.Current } else { $null }
+    $targetVersion = if ($null -ne $result) { $result.Available } else { $null }
     Write-SelfUpdateLog ("Chocolatey outdated scan: code=$status; rows=$($output.Count); " +
         "idle-shutdown=$([bool]$targetVersion); current=$currentVersion; available=$targetVersion; " +
         "freshMetadata=True.")
