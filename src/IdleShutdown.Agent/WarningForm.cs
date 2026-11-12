@@ -149,8 +149,8 @@ internal sealed class WarningForm : Form
         // percentage. Show an indeterminate spinner instead of a frozen 00:00.
         _maintenanceSpinner = new MaintenanceSpinner(_palette.Accent)
         {
-            Location = new Point(262, 164),
-            Size = new Size(56, 56),
+            Location = new Point(264, 160),
+            Size = new Size(52, 52),
             BackColor = _palette.CardBackground,
             Visible = false,
             TabStop = false
@@ -422,13 +422,9 @@ internal sealed class WarningForm : Form
             // percentage. The service controls actual shutdown timing.
             _progressFill.Width = 110;
             _progressFill.BackColor = _palette.Accent;
-            ApplyRoundedRegions(
-                this.Controls[0] as Panel ?? throw new InvalidOperationException(),
-                this.Controls[0].Controls[0] as Panel ?? throw new InvalidOperationException(),
-                _iconCircle,
-                _progressTrack,
-                _progressFill,
-                _continueButton);
+            // Resize the moving bar's rounded clipping region.
+            _progressFill.Region = CreateRoundedRegion(
+                _progressFill.ClientRectangle, 5);
         }
 
         var waitingSeconds = (int)Math.Max(
