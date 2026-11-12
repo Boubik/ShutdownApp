@@ -325,24 +325,9 @@ try {
         Write-Host "Migrating config.json to ConfigVersion $targetConfigVersion (existing settings preserved)."
     }
 
-    # Write a complete new config first, then replace the previous file
-    # atomically on Windows. Rollback still restores the old config on error.
-    $configTempPath = Join-Path $dataDir ("config.json.new." + [guid]::NewGuid().ToString('N'))
-    try {
-        $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configTempPath -Encoding UTF8 -ErrorAction Stop
-        if (Test-Path -LiteralPath $configPath) {
-            [IO.File]::Replace($configTempPath, $configPath, $null)
-        }
-        else {
-            Move-Item -LiteralPath $configTempPath -Destination $configPath -ErrorAction Stop
-        }
-    }
-    finally {
-        if (Test-Path -LiteralPath $configTempPath) {
-            Remove-Item -LiteralPath $configTempPath -Force -ErrorAction SilentlyContinue
-        }
-    }
-
+    # Save atomically with a NON-NULL swap-backup path; Windows PowerShell's
+    # File.Replace rejects $null as an invalid backup path.
+    Save-IdleShutdownConfiguration -Config $config -ConfigPath $configPath
 
 if (-not (Test-Path $logPath)) {
     New-Item $logPath -ItemType File -Force | Out-Null

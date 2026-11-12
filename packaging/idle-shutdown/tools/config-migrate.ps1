@@ -1,5 +1,5 @@
 #requires -Version 5.1
-# Pure migration function. No files, services, or network operations.
+# Version-aware migration and safely tested atomic configuration writer.
 function Merge-IdleShutdownConfiguration {
     [CmdletBinding()]
     param(
@@ -58,4 +58,50 @@ function Merge-IdleShutdownConfiguration {
         }
     }
     return ,$config
+}
+
+# Write an already-validated migrated configuration safely. File.Replace
+# REQUIRES an actual backup filename on Windows PowerShell/.NET Framework;
+# passing $null caused 2.0.2/2.0.3 upgrades to fail during config migration.
+# Keep the caller's persistent versioned backup separate from this temporary
+# atomic-swap backup, whose contents are no longer needed after a good swap.
+function Save-IdleShutdownConfiguration {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] [System.Collections.IDictionary] $Config,
+        [Parameter(Mandatory = $true)] [string] $ConfigPath
+    )
+
+    $directory = Split-Path -Parent $ConfigPath
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        throw "Configuration directory does not exist: $directory"
+    }
+    $random = [guid]::NewGuid().ToString('N')
+    $temporaryPath = Join-Path $directory ("config.json.new.$random")
+    $swapBackupPath = Join-Path $directory ("config.json.swap.$random.bak")
+
+    try {
+        $json = $Config | ConvertTo-Json -Depth 5 -ErrorAction Stop
+        [IO.File]::WriteAllText(
+            $temporaryPath, $json, [Text.UTF8Encoding]::new($false))
+
+        if ([IO.File]::Exists($ConfigPath)) {
+            # Both paths and the backup live on the same NTFS volume.
+            [IO.File]::Replace(
+                $temporaryPath, $ConfigPath, $swapBackupPath)
+        }
+        else {
+            [IO.File]::Move($temporaryPath, $ConfigPath)
+        }
+    }
+    finally {
+        # Leave no .new.* or .swap.* fragments after a normal attempt.
+        # Interrupted upgrades retain their separate pre-VERSION backup.
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $swapBackupPath) {
+            Remove-Item -LiteralPath $swapBackupPath -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
