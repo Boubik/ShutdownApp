@@ -312,13 +312,18 @@ try {
         return
     }
 
-    $queryArgs = @('outdated', 'idle-shutdown', '--limit-output')
+    # 'choco outdated' accepts switches only, NOT a package name argument.
+    # Previous invocations ('outdated idle-shutdown') silently returned no
+    # matching rows despite ProGet advertising a newer stable package.
+    # Always bypass HTTP metadata cache for this once-per-boot/daily check.
+    $queryArgs = @('outdated', '--limit-output',
+                   '--ignore-http-cache', '--ignore-unfound')
     if ($source) { $queryArgs += @('--source', $source) }
 
-    $output = & $choco @queryArgs 2>$null
+    $output = @(& $choco @queryArgs 2>$null)
     $status = $LASTEXITCODE
     if ($status -notin @(0, 2)) {
-        Write-SelfUpdateLog ("Chocolatey outdated check failed (code $status).")
+        Write-SelfUpdateLog ("Chocolatey outdated check failed (code $status); sourceCustom=$([bool]$source).")
         return
     }
 
@@ -331,6 +336,9 @@ try {
             break
         }
     }
+    Write-SelfUpdateLog ("Chocolatey outdated scan: code=$status; rows=$($output.Count); " +
+        "idle-shutdown=$([bool]$targetVersion); current=$currentVersion; available=$targetVersion; " +
+        "freshMetadata=True.")
     $forceRepair = $false
     if (-not $targetVersion) {
         if ($repairReasons.Count -eq 0) {
