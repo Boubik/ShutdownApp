@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.6
+
+- Opravuje situaci, kdy rychlé přihlášení přes RDP po restartu vedlo k neustálému přeskočení samoaktualizace.
+- Při **startu Windows** dovoluje po dobu prvních **20 minut** automatický přechod na novější stabilní verzi také při přihlášeném uživateli. Pokud update není, jen se ukončí kontrola.
+- Bezpečnostní ochrany zůstávají: probíhající Windows Update/Chocolatey údržba, další updater nebo čekající restart instalaci odloží; nedochází k odhlášení uživatele ani restartu Windows.
+- Denní kontrola ve 3:00 mimo časové okno po startu nadále při přihlášených uživatelích instalaci odloží.
+- Aktualizace krátce restartuje pouze službu a agenta IdleShutdown; zachovává konfiguraci a používá výhradně stabilní Chocolatey balíčky.
+- Přidává Windows regresní testy pro časové hranice startovního okna, přihlášené RDP relace, standardní noční režim a ochrany instalačních zámků.
+
 ## 2.0.5
 
 - Technické stabilní vydání určené k ověření samoaktualizace z verze `2.0.4` na `2.0.5`.
