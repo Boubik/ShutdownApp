@@ -31,7 +31,7 @@ Výchozí produkční konfigurace:
 
 ```json
 {
-  "ConfigVersion": "2.0.7",
+  "ConfigVersion": "2.0.8",
   "IdleMinutes": 90,
   "WarningSeconds": 300,
   "CheckIntervalSeconds": 5,
@@ -156,7 +156,11 @@ choco list --limit-output
 ```
 
 Pokud se `SelfUpdate.log` ještě nevytvořil, nemusí to být chyba: vzniká
-při prvním diagnostickém zápisu pomocné úlohy. Automatické vydání na GitHub
+při prvním diagnostickém zápisu pomocné úlohy. Od verze **2.0.8**
+kontrola používá správnou syntaxi `choco outdated --limit-output --ignore-http-cache
+--ignore-unfound` (bez názvu balíčku jako argumentu) a z výsledku vybere
+`idle-shutdown`. Do logu zapisuje návratový kód, počet řádků a nalezenou
+verzi. Automatické vydání na GitHub
 **nenahrává balíček do interního Chocolatey repozitáře**; do vlastního feedu
 jej musí nejprve publikovat správce.
 

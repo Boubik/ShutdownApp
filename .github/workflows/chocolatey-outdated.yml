@@ -1,0 +1,30 @@
+name: Validate Chocolatey updater query
+
+on:
+  push:
+    branches:
+      - develop/2.0.8-fix-outdated
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chocolatey-outdated:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Regression test against real Chocolatey 2.7.5 output
+        run: ./tests/ChocolateyOutdated.Tests.ps1
+      - name: Self-update safety regression
+        run: ./tests/SelfUpdateRecovery.Tests.ps1
+      - name: Post-boot signed-in user regression
+        run: ./tests/BootSelfUpdate.Tests.ps1
+      - name: Run Windows build
+        run: .\build.bat

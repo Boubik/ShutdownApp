@@ -158,6 +158,21 @@ function Test-SessionSafeForUpdate {
     return @(Get-Process explorer -ErrorAction SilentlyContinue).Count -eq 0
 }
 
+# Parse ALL outdated packages, then select exactly our package ID.
+# Chocolatey outdated has no positional package-name filter.
+function Get-IdleShutdownOutdatedResult {
+    param([AllowNull()] [object[]] $Lines)
+    foreach ($line in @($Lines)) {
+        if ([string]$line -match '^idle-shutdown\|([^|]+)\|([^|]+)(?:\||$)') {
+            return [pscustomobject]@{
+                Current = $Matches[1].Trim()
+                Available = $Matches[2].Trim()
+            }
+        }
+    }
+    return $null
+}
+
 function Get-InstalledVersion {
     param([string]$Choco)
     $lines = & $Choco list --limit-output 2>$null
@@ -312,25 +327,27 @@ try {
         return
     }
 
-    $queryArgs = @('outdated', 'idle-shutdown', '--limit-output')
+    # 'choco outdated' accepts switches only, NOT a package name argument.
+    # Previous invocations ('outdated idle-shutdown') silently returned no
+    # matching rows despite ProGet advertising a newer stable package.
+    # Always bypass HTTP metadata cache for this once-per-boot/daily check.
+    $queryArgs = @('outdated', '--limit-output',
+                   '--ignore-http-cache', '--ignore-unfound')
     if ($source) { $queryArgs += @('--source', $source) }
 
-    $output = & $choco @queryArgs 2>$null
+    $output = @(& $choco @queryArgs 2>$null)
     $status = $LASTEXITCODE
     if ($status -notin @(0, 2)) {
-        Write-SelfUpdateLog ("Chocolatey outdated check failed (code $status).")
+        Write-SelfUpdateLog ("Chocolatey outdated check failed (code $status); sourceCustom=$([bool]$source).")
         return
     }
 
-    $targetVersion = $null
-    $currentVersion = $null
-    foreach ($line in $output) {
-        if ($line -match '^idle-shutdown\|([^|]+)\|([^|]+)(?:\||$)') {
-            $currentVersion = $Matches[1].Trim()
-            $targetVersion = $Matches[2].Trim()
-            break
-        }
-    }
+    $result = Get-IdleShutdownOutdatedResult -Lines $output
+    $currentVersion = if ($null -ne $result) { $result.Current } else { $null }
+    $targetVersion = if ($null -ne $result) { $result.Available } else { $null }
+    Write-SelfUpdateLog ("Chocolatey outdated scan: code=$status; rows=$($output.Count); " +
+        "idle-shutdown=$([bool]$targetVersion); current=$currentVersion; available=$targetVersion; " +
+        "freshMetadata=True.")
     $forceRepair = $false
     if (-not $targetVersion) {
         if ($repairReasons.Count -eq 0) {

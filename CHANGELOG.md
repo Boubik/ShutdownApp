@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.8
+
+- Opravuje vyhledávání stabilních aktualizací: příkaz `choco outdated` neumožňuje poziční argument s názvem balíčku. Dosavadní `choco outdated idle-shutdown` vracel prázdný výsledek i při dostupné aktualizaci.
+- Při každé kontrole ignoruje HTTP cache metadat (`--ignore-http-cache`) a při explicitním Chocolatey zdroji nezahrnuje nenalezené balíčky (`--ignore-unfound`).
+- Z výsledků `choco outdated` vybírá pouze `idle-shutdown` a nadále instaluje výhradně stabilní verze.
+- Přidává diagnostiku kontroly repozitáře v `SelfUpdate.log` (návratový kód, počet řádků, nalezená verze) a regresní Windows test pro reálný výstup `2.0.6 → 2.0.7`.
+- Zachovává ostatní funkce i bezpečnostní omezení verze 2.0.7.
+
 ## 2.0.7
 
 - Testovací stabilní vydání pro ověření automatické aktualizace **2.0.6 → 2.0.7** po startu Windows, i při přihlášení přes RDP.
