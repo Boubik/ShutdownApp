@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.9
+
+- Testovací **stabilní** vydání bez změn funkcionality pro ověření plně automatického upgradu `2.0.8 → 2.0.9` přes interní Chocolatey repozitář.
+- Pouze aktualizace verzí aplikace a konfigurace (`ConfigVersion: 2.0.9`); všechny bezpečnostní mechanismy, průběh údržby i aktualizátor zůstávají beze změny.
+
 ## 2.0.8
 
 - Opravuje vyhledávání stabilních aktualizací: příkaz `choco outdated` neumožňuje poziční argument s názvem balíčku. Dosavadní `choco outdated idle-shutdown` vracel prázdný výsledek i při dostupné aktualizaci.
