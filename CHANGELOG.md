@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.4
+
+- Opravuje chybu instalace z verzí 2.0.2 a 2.0.3: `File.Replace` dostával neplatnou záložní cestu, proto migrace `config.json` selhávala. Nový atomický zápis používá platnou dočasnou zálohu a zachovává původní konfiguraci pro rollback.
+- Windows regresní test nyní provádí **reálnou výměnu existujícího `config.json`**, nikoli jen kontrolu slučování hodnot.
+- Samoaktualizátor ověřuje nejen verzi v evidenci Chocolatey, ale také verzi skutečně nainstalovaných Agent/Service EXE, od verze 2.0.2 i `ConfigVersion` a cestu k SYSTEM aktualizační úloze.
+- Nesoulad (například „Chocolatey 2.0.2, EXE 2.0.1“) vyvolá při nejbližší bezpečné příležitosti opravnou instalaci stabilního balíčku pomocí `--force`; nikdy se samočinně neinstalují beta/RC vydání.
+- `SelfUpdate.log` potvrzuje dokončení pouze při shodě všech komponent a při nesouladu zaznamená `INCOMPLETE` s nenulovým výsledkem SYSTEM úlohy.
+
 ## 2.0.3
 
 - Replaces the misleading frozen `00:00` in the shutdown popup with a continuously **rotating spinner** and indeterminate moving progress strip.

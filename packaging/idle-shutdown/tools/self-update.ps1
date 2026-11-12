@@ -7,6 +7,7 @@ $configPath = Join-Path $dataDir 'config.json'
 $selfLockPath = Join-Path $dataDir 'selfupdate.lock'
 $maintenanceLockPath = Join-Path $dataDir 'maintenance.lock'
 $logPath = Join-Path $dataDir 'SelfUpdate.log'
+$script:UpgradeVerificationFailed = $false
 
 # Same retention policy as the primary service log:
 # 2 MiB active file, .1 and .2 archives (about 6 MiB total).
@@ -128,6 +129,68 @@ function Get-InstalledVersion {
     return $null
 }
 
+
+# Read REAL installed binaries; Chocolatey's package ledger is not enough to
+# establish success after an unexpected Windows restart.
+function Get-DeployedBinaryVersion {
+    param([string]$Name)
+    $exe = Join-Path (Join-Path $env:ProgramFiles 'IdleShutdown') $Name
+    if (-not (Test-Path -LiteralPath $exe)) { return '[missing]' }
+    try {
+        $v = [string](Get-Item -LiteralPath $exe -ErrorAction Stop).VersionInfo.ProductVersion
+        if ($v -match '^([0-9]+[.][0-9]+[.][0-9]+)(?:[+.-].*)?$') {
+            return $Matches[1]
+        }
+        return '[unknown]'
+    }
+    catch { return '[unreadable]' }
+}
+
+function Get-SelfUpdateTaskVersion {
+    try {
+        $task = Get-ScheduledTask -TaskName 'Idle Shutdown Self Update' -ErrorAction Stop
+        $action = @($task.Actions) | Select-Object -First 1
+        if ([string]$action.Arguments -match 'SelfUpdate-([0-9]+[.][0-9]+[.][0-9]+)[.]ps1') {
+            return $Matches[1]
+        }
+        return '[unknown]'
+    }
+    catch { return '[missing]' }
+}
+
+function Get-UpgradeInconsistencies {
+    param([string]$ExpectedVersion, [psobject]$CurrentConfig)
+    $reasons = @()
+    $agent = Get-DeployedBinaryVersion 'IdleShutdown.Agent.exe'
+    $service = Get-DeployedBinaryVersion 'IdleShutdown.Service.exe'
+    if ($agent -ne $ExpectedVersion) { $reasons += "agent=$agent" }
+    if ($service -ne $ExpectedVersion) { $reasons += "service=$service" }
+
+    # 2.0.0/2.0.1 did not contain ConfigVersion and used the 2.0.0
+    # task script even when the application itself had version 2.0.1.
+    if ($ExpectedVersion -match '^[0-9]+[.][0-9]+[.][0-9]+$' -and
+        [version]$ExpectedVersion -ge [version]'2.0.2') {
+        if ([string]$CurrentConfig.ConfigVersion -ne $ExpectedVersion) {
+            $reasons += "configVersion=$([string]$CurrentConfig.ConfigVersion)"
+        }
+        $helperVersion = Get-SelfUpdateTaskVersion
+        if ($helperVersion -ne $ExpectedVersion) {
+            $reasons += "taskHelper=$helperVersion"
+        }
+    }
+    return @($reasons)
+}
+
+function Test-RebootPending {
+    foreach ($path in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+    )) {
+        if (Test-Path -LiteralPath $path) { return $true }
+    }
+    return $false
+}
+
 if (-not (Test-Path -LiteralPath $configPath)) { return }
 try {
     $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -170,6 +233,10 @@ try {
         Write-SelfUpdateLog 'Skipped: one or more console/RDP users are still logged on.'
         return
     }
+    if (Test-RebootPending) {
+        Write-SelfUpdateLog 'Skipped: Windows reboot is pending; postpone self-update.'
+        return
+    }
 
     # A conservative extra check for sessions that may not have fully
     # completed interactive logon enumeration.
@@ -190,6 +257,14 @@ try {
     }
 
     $installedCurrent = Get-InstalledVersion -Choco $choco
+    if (-not $installedCurrent) {
+        Write-SelfUpdateLog 'No Chocolatey idle-shutdown inventory found; refusing automatic repair.'
+        return
+    }
+    $repairReasons = @()
+    if ($installedCurrent -match '^[0-9]+[.][0-9]+[.][0-9]+$') {
+        $repairReasons = @(Get-UpgradeInconsistencies -ExpectedVersion $installedCurrent -CurrentConfig $config)
+    }
     # Policy: automatic self-update NEVER installs prerelease builds,
     # regardless of what is currently installed or what a feed advertises.
     $source = [string]$config.ChocolateySource
@@ -217,9 +292,16 @@ try {
             break
         }
     }
+    $forceRepair = $false
     if (-not $targetVersion) {
-        Write-SelfUpdateLog 'No newer stable idle-shutdown package available.'
-        return
+        if ($repairReasons.Count -eq 0) {
+            Write-SelfUpdateLog 'No newer stable idle-shutdown package available; files agree.'
+            return
+        }
+        $targetVersion = $installedCurrent
+        $forceRepair = $true
+        Write-SelfUpdateLog ("INCOMPLETE previous installation: " +
+            ($repairReasons -join ', ') + "; requesting repair of stable $targetVersion.")
     }
     # The remote feed may be misconfigured. This strict allow-list ensures
     # prerelease versions are NEVER eligible for automatic self-update.
@@ -246,25 +328,55 @@ try {
         return
     }
 
-    Write-SelfUpdateLog ("Stable upgrade available: $currentVersion -> $targetVersion; starting detached Chocolatey installer.")
-    # Pin the exact verified stable version, without --pre.
+    if (-not $forceRepair) {
+        Write-SelfUpdateLog ("Stable upgrade available: $currentVersion -> $targetVersion; starting detached Chocolatey installer.")
+    }
+    # Pin the exact verified stable version, never using --pre.
     $upgradeArgs = @('upgrade', 'idle-shutdown', '-y', '--no-progress',
                      "--version=$targetVersion")
+    if ($forceRepair) { $upgradeArgs += '--force' }
     if ($source) { $upgradeArgs += @('--source', $source) }
 
-    # This is a separate SYSTEM scheduled task, not an IdleShutdown thread.
-    # The Chocolatey package performs a guarded/rollback-capable service swap.
+    # This is a separate SYSTEM task. Chocolatey writes its detailed output
+    # to its own log; persist the start so interrupted upgrades are visible.
+    Write-SelfUpdateLog ("Chocolatey installer invoked; target=$targetVersion; repair=$forceRepair.")
     & $choco @upgradeArgs *> $null
     $upgradeExit = $LASTEXITCODE
 
     $installed = $null
     try { $installed = Get-InstalledVersion -Choco $choco }
-    catch { Write-SelfUpdateLog ('Version verification failed: ' + $_.Exception.Message) }
-    Write-SelfUpdateLog ("Upgrade finished: exitCode=$upgradeExit; installedVersion=$installed; targetVersion=$targetVersion.")
+    catch { Write-SelfUpdateLog ('Inventory verification failed: ' + $_.Exception.Message) }
+    $actualConfig = $null
+    try { $actualConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json }
+    catch { Write-SelfUpdateLog ('Config verification failed: ' + $_.Exception.Message) }
+    $agent = Get-DeployedBinaryVersion 'IdleShutdown.Agent.exe'
+    $service = Get-DeployedBinaryVersion 'IdleShutdown.Service.exe'
+    $helper = Get-SelfUpdateTaskVersion
+    $configVersion = [string]$actualConfig.ConfigVersion
+    $verified = ($upgradeExit -in @(0, 3010)) -and
+        ($installed -eq $targetVersion) -and
+        ($agent -eq $targetVersion) -and
+        ($service -eq $targetVersion) -and
+        ($configVersion -eq $targetVersion) -and
+        ($helper -eq $targetVersion)
+    if ($verified) {
+        Write-SelfUpdateLog ("VERIFIED complete: $targetVersion; binaries/config/task match; exitCode=$upgradeExit.")
+    }
+    else {
+        Write-SelfUpdateLog ("INCOMPLETE: choco=$installed; agent=$agent; service=$service; " +
+            "config=$configVersion; task=$helper; target=$targetVersion; exitCode=$upgradeExit. " +
+            'Retry at next unattended start; inspect Chocolatey log for errors.')
+        $script:UpgradeVerificationFailed = $true
+    }
 }
 catch {
     Write-SelfUpdateLog ('Self-upgrade failed safely: ' + $_.Exception.Message)
+    $script:UpgradeVerificationFailed = $true
 }
 finally {
     if ($selfLock) { $selfLock.Dispose() }
+}
+if ($script:UpgradeVerificationFailed) {
+    # Nonzero task result when the reported upgrade did not fully install.
+    exit 1
 }

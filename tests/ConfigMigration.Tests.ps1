@@ -92,4 +92,31 @@ $partial = $defaults | ConvertTo-Json | ConvertFrom-Json
 $partial.PSObject.Properties.Remove('SelfUpdateEnabled')
 Assert-Throws { Merge-IdleShutdownConfiguration -Defaults $partial -Existing $legacy -TargetVersion $target } 'missing default'
 
+
+# Regression for the field-reported 2.0.2/2.0.3 installation failure:
+# [IO.File]::Replace(newConfig, existingConfig, $null) failed with
+# "The path is not of a legal form." Test a real replace on Windows.
+$testDir = Join-Path ([IO.Path]::GetTempPath()) ("IdleShutdown-ConfigTest-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testDir -ErrorAction Stop | Out-Null
+try {
+    $testPath = Join-Path $testDir 'config.json'
+    [IO.File]::WriteAllText($testPath, '{"ConfigVersion":"2.0.1","IdleMinutes":37}')
+    Save-IdleShutdownConfiguration -Config $migrated -ConfigPath $testPath
+    $onDisk = Get-Content -LiteralPath $testPath -Raw | ConvertFrom-Json
+    Assert-Equal $target $onDisk.ConfigVersion 'atomic replacement version'
+    Assert-Equal 41 $onDisk.IdleMinutes 'atomic replacement preserved idle time'
+    $fragments = @(Get-ChildItem -LiteralPath $testDir -File |
+        Where-Object { $_.Name -like 'config.json.new.*' -or $_.Name -like 'config.json.swap.*' })
+    Assert-Equal 0 $fragments.Count 'atomic replacement removed temporary files'
+
+    # Fresh install must work without an existing destination.
+    Remove-Item -LiteralPath $testPath -Force
+    Save-IdleShutdownConfiguration -Config $migrated -ConfigPath $testPath
+    $fresh = Get-Content -LiteralPath $testPath -Raw | ConvertFrom-Json
+    Assert-Equal $target $fresh.ConfigVersion 'new configuration created'
+}
+finally {
+    Remove-Item -LiteralPath $testDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host 'PASS: config migration from 1.3.4, 2.0.0, and 2.0.1; defaults, opt-outs, downgrade protection, idempotence.'
