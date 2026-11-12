@@ -11,7 +11,8 @@ internal sealed record UiStrings(
     string ContinueButton,
     string UrgentStatus,
     string MaintenancePreWarningStatus,
-    string MaintenanceCountdownCaption,
+    string MaintenanceActiveCaption,
+    string MaintenanceElapsedCaption,
     string MaintenanceStatus,
     string ServiceContactFailed,
     string ComputerWillNotShutdown,
@@ -29,9 +30,10 @@ internal static class LocalizedText
         ContinueButton: "Continue working",
         UrgentStatus: "Shutdown is imminent. Move the mouse or use the button to continue.",
         MaintenancePreWarningStatus: "Updates are starting now. The computer will shut down after the countdown and updates finish.",
-        MaintenanceCountdownCaption: "Shutting down after updates finish",
-        MaintenanceStatus: "Waiting for Windows Update and Chocolatey to finish. " +
-                           "You can still cancel the shutdown.",
+        MaintenanceActiveCaption: "UPDATES IN PROGRESS",
+        MaintenanceElapsedCaption: "Waiting: {0}",
+        MaintenanceStatus: "Windows Update and Chocolatey are running. " +
+                           "The computer will shut down once they finish. You can still cancel.",
         ServiceContactFailed: "The automatic shutdown service could not be contacted.",
         ComputerWillNotShutdown: "The computer will not be shut down.",
         TechnicalDetail: "Technical detail");
@@ -46,9 +48,10 @@ internal static class LocalizedText
         ContinueButton: "Pokračovat v práci",
         UrgentStatus: "Vypnutí je bezprostřední. Pohněte myší nebo pokračujte tlačítkem.",
         MaintenancePreWarningStatus: "Aktualizace se spouštějí už nyní. Počítač se vypne po odpočtu a dokončení aktualizací.",
-        MaintenanceCountdownCaption: "Vypnutí po dokončení aktualizací",
-        MaintenanceStatus: "Čeká se na dokončení aktualizací Windows a Chocolatey. " +
-                           "Vypnutí lze stále zrušit.",
+        MaintenanceActiveCaption: "PROBÍHAJÍ AKTUALIZACE",
+        MaintenanceElapsedCaption: "Čekání: {0}",
+        MaintenanceStatus: "Windows Update a Chocolatey pracují. " +
+                           "Po dokončení se počítač vypne. Vypnutí lze stále zrušit.",
         ServiceContactFailed: "Nepodařilo se kontaktovat službu automatického vypnutí.",
         ComputerWillNotShutdown: "Počítač nebude vypnut.",
         TechnicalDetail: "Technický detail");
@@ -63,9 +66,10 @@ internal static class LocalizedText
         ContinueButton: "Weiterarbeiten",
         UrgentStatus: "Das Herunterfahren steht unmittelbar bevor. Bewegen Sie die Maus oder verwenden Sie die Schaltfläche.",
         MaintenancePreWarningStatus: "Updates starten jetzt. Der PC fährt nach dem Countdown und Abschluss der Updates herunter.",
-        MaintenanceCountdownCaption: "Herunterfahren nach den Updates",
-        MaintenanceStatus: "Windows Update und Chocolatey werden abgeschlossen. " +
-                           "Das Herunterfahren kann noch abgebrochen werden.",
+        MaintenanceActiveCaption: "UPDATES WERDEN INSTALLIERT",
+        MaintenanceElapsedCaption: "Wartezeit: {0}",
+        MaintenanceStatus: "Windows Update und Chocolatey sind aktiv. " +
+                           "Danach fährt der PC herunter. Sie können noch abbrechen.",
         ServiceContactFailed: "Der Dienst für das automatische Herunterfahren konnte nicht erreicht werden.",
         ComputerWillNotShutdown: "Der Computer wird nicht heruntergefahren.",
         TechnicalDetail: "Technisches Detail");
@@ -80,9 +84,10 @@ internal static class LocalizedText
         ContinueButton: "Continuar trabajando",
         UrgentStatus: "El apagado es inminente. Mueva el ratón o use el botón para continuar.",
         MaintenancePreWarningStatus: "Las actualizaciones comienzan ahora. El equipo se apagará cuando termine la cuenta y las actualizaciones.",
-        MaintenanceCountdownCaption: "Apagado al terminar las actualizaciones",
-        MaintenanceStatus: "Esperando a Windows Update y Chocolatey. " +
-                           "Todavía puede cancelar el apagado.",
+        MaintenanceActiveCaption: "INSTALANDO ACTUALIZACIONES",
+        MaintenanceElapsedCaption: "Esperando: {0}",
+        MaintenanceStatus: "Windows Update y Chocolatey siguen trabajando. " +
+                           "El equipo se apagará al terminar. Todavía puede cancelar.",
         ServiceContactFailed: "No se pudo contactar con el servicio de apagado automático.",
         ComputerWillNotShutdown: "El equipo no se apagará.",
         TechnicalDetail: "Detalle técnico");
