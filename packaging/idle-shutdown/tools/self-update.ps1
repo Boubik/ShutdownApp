@@ -119,6 +119,45 @@ public static class IdleShutdownWtsSessionCheck {
     return -not [IdleShutdownWtsSessionCheck]::HasLoggedOnUsers()
 }
 
+
+# The startup trigger can fire after an RDP/console logon. Within a short
+# window after a real Windows boot, allow a stable package upgrade while
+# users are logged on. Only IdleShutdown's agent/service can be restarted,
+# not the user's processes or Windows itself.
+function Test-WithinStartupUpgradeWindow {
+    param(
+        [datetime] $BootTime,
+        [datetime] $CurrentTime,
+        [int] $WindowMinutes = 20
+    )
+    if ($WindowMinutes -le 0) { return $false }
+    $elapsed = ($CurrentTime - $BootTime).TotalSeconds
+    return $elapsed -ge 0 -and $elapsed -le ($WindowMinutes * 60)
+}
+
+function Test-BootStartupUpgradeWindow {
+    try {
+        $boot = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+        if ($null -eq $boot) { throw 'Windows did not return LastBootUpTime.' }
+        return Test-WithinStartupUpgradeWindow -BootTime $boot -CurrentTime (Get-Date) -WindowMinutes 20
+    }
+    catch {
+        # Without a trustworthy boot time, fail closed to the legacy
+        # logged-off-only rule.
+        Write-SelfUpdateLog ('Cannot verify post-boot update window: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Test-SessionSafeForUpdate {
+    param([bool] $BootStartupWindow)
+    if ($BootStartupWindow) { return $true }
+    # Outside the startup window, keep the conservative policy for
+    # the daily 03:00 task and manually triggered checks.
+    if (-not (Test-NoLoggedOnUsers)) { return $false }
+    return @(Get-Process explorer -ErrorAction SilentlyContinue).Count -eq 0
+}
+
 function Get-InstalledVersion {
     param([string]$Choco)
     $lines = & $Choco list --limit-output 2>$null
@@ -229,21 +268,21 @@ catch {
 }
 
 try {
-    if (-not (Test-NoLoggedOnUsers)) {
-        Write-SelfUpdateLog 'Skipped: one or more console/RDP users are still logged on.'
+    $bootStartupWindow = Test-BootStartupUpgradeWindow
+    if (-not (Test-SessionSafeForUpdate -BootStartupWindow $bootStartupWindow)) {
+        Write-SelfUpdateLog 'Skipped: signed-in console/RDP session outside post-boot update window.'
         return
+    }
+    if ($bootStartupWindow) {
+        Write-SelfUpdateLog 'Post-boot window active: user login does not block stable self-update. Windows and user applications will not be restarted.'
     }
     if (Test-RebootPending) {
         Write-SelfUpdateLog 'Skipped: Windows reboot is pending; postpone self-update.'
         return
     }
 
-    # A conservative extra check for sessions that may not have fully
-    # completed interactive logon enumeration.
-    if (@(Get-Process explorer -ErrorAction SilentlyContinue).Count -gt 0) {
-        Write-SelfUpdateLog 'Skipped: explorer.exe still running.'
-        return
-    }
+    # Explorer is deliberately permitted during the startup window.
+    # Outside it, Test-SessionSafeForUpdate still verifies WTS and explorer.
 
     try {
         $probe = [IO.FileStream]::new(
@@ -310,11 +349,12 @@ try {
         return
     }
 
-    # Revalidate just before touching running services. If the machine became
-    # occupied, no upgrade starts. Never terminate a running WUA installer.
-    if (-not (Test-NoLoggedOnUsers) -or
-        @(Get-Process explorer -ErrorAction SilentlyContinue).Count -gt 0) {
-        Write-SelfUpdateLog 'Upgrade postponed: user logged on during update check.'
+    # Revalidate before stopping our service/agent. If the startup window
+    # expired during discovery, fall back to the no-user rule. A maintenance
+    # guard is always required, whether users are signed in or not.
+    $stillInBootWindow = $bootStartupWindow -and (Test-BootStartupUpgradeWindow)
+    if (-not (Test-SessionSafeForUpdate -BootStartupWindow $stillInBootWindow)) {
+        Write-SelfUpdateLog 'Upgrade postponed: user logged on outside post-boot update window.'
         return
     }
     try {
