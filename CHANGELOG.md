@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.5
+
+- Technické stabilní vydání určené k ověření samoaktualizace z verze `2.0.4` na `2.0.5`.
+- **Bez funkčních změn** oproti `2.0.4`; mění se pouze číslo vydání a `ConfigVersion`.
+- Při aktualizaci se musí zachovat stávající uživatelská konfigurace a bezpečně aktualizovat EXE, verze konfigurace i cesta naplánované SYSTEM úlohy.
+
 ## 2.0.4
 
 - Opravuje chybu instalace z verzí 2.0.2 a 2.0.3: `File.Replace` dostával neplatnou záložní cestu, proto migrace `config.json` selhávala. Nový atomický zápis používá platnou dočasnou zálohu a zachovává původní konfiguraci pro rollback.
