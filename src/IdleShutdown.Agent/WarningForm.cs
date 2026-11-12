@@ -427,8 +427,8 @@ internal sealed class WarningForm : Form
                 _progressFill.ClientRectangle, 5);
         }
 
-        var waitingSeconds = (int)Math.Max(
-            0, (_countdown.Elapsed - TimeSpan.FromSeconds(_warningSeconds)).TotalSeconds);
+        var waitingSeconds = WarningDisplayPolicy.GetMaintenanceWaitingSeconds(
+            _countdown.Elapsed, _warningSeconds);
 
         _maintenanceElapsedLabel.Text = string.Format(
             _ui.MaintenanceElapsedCaption,

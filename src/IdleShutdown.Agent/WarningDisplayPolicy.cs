@@ -7,6 +7,15 @@ internal static class WarningDisplayPolicy
     public static bool ShouldRemainVisibleAtZero(bool maintenanceEnabled) =>
         maintenanceEnabled;
 
+    // The countdown ending does NOT imply that maintenance completed.
+    // Measure elapsed waiting time without inventing update percentages.
+    public static int GetMaintenanceWaitingSeconds(
+        TimeSpan elapsedSinceWarning,
+        int warningSeconds) =>
+        Math.Max(0, (int)Math.Floor(
+            (elapsedSinceWarning - TimeSpan.FromSeconds(warningSeconds))
+            .TotalSeconds));
+
     public static bool HasVerifiedLocalInput(
         uint? inputTickAtStart,
         uint? currentInputTick)

@@ -19,6 +19,14 @@ var tests = new (string Name, Action Run)[]
         Expect(false, WarningDisplayPolicy.ShouldRemainVisibleAtZero(false));
     }),
 
+    ("indeterminate maintenance waiting time starts at zero and advances without fake percentages", () =>
+    {
+        Expect(0, WarningDisplayPolicy.GetMaintenanceWaitingSeconds(TimeSpan.Zero, 30));
+        Expect(0, WarningDisplayPolicy.GetMaintenanceWaitingSeconds(TimeSpan.FromSeconds(30), 30));
+        Expect(11, WarningDisplayPolicy.GetMaintenanceWaitingSeconds(TimeSpan.FromSeconds(41.9), 30));
+        Expect(80, WarningDisplayPolicy.GetMaintenanceWaitingSeconds(TimeSpan.FromSeconds(110), 30));
+    }),
+
     ("beta version appears in popup and strips commit metadata", () =>
     {
         Expect("v2.0.0-beta.4", VersionDisplay.Format(
