@@ -1,6 +1,6 @@
 # Changelog
 
-## Planned 2.0.3 — visible maintenance progress (development)
+## 2.0.3
 
 - Replaces the misleading frozen `00:00` in the shutdown popup with a continuously **rotating spinner** and indeterminate moving progress strip.
 - Displays a bold, localized **UPDATES IN PROGRESS** heading and an elapsed waiting timer; Czech, English, German, and Spanish are supported.
