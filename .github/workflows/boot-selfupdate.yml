@@ -1,0 +1,30 @@
+name: Post-boot self-update validation
+
+on:
+  push:
+    branches:
+      - develop/2.0.6-boot-selfupdate
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boot-update:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Check boot-window and logged-on session policy
+        run: ./tests/BootSelfUpdate.Tests.ps1
+      - name: Check existing partial upgrade repair
+        run: ./tests/SelfUpdateRecovery.Tests.ps1
+      - name: Check configuration migration
+        run: ./tests/ConfigMigration.Tests.ps1
+      - name: Windows build and logic regression
+        run: .\build.bat
