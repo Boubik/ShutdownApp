@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.3
+
+- Replaces the misleading frozen `00:00` in the shutdown popup with a continuously **rotating spinner** and indeterminate moving progress strip.
+- Displays a bold, localized **UPDATES IN PROGRESS** heading and an elapsed waiting timer; Czech, English, German, and Spanish are supported.
+- Does not claim an update percentage because the current Windows Update/Chocolatey service pipeline does not provide trustworthy end-to-end progress to the popup.
+- Keeps the Continue Working button and verified keyboard/mouse cancellation active. No changes to update safety coordination or shutdown authorization.
+
 ## 2.0.2
 
 - Přidává `ConfigVersion` přímo do `config.json`; hodnota odpovídá verzi aplikace a je ověřována při instalaci.

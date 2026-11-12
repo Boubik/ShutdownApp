@@ -24,8 +24,11 @@ internal sealed class WarningForm : Form
     private readonly bool _keepOpenForMaintenance;
     private readonly Func<bool>? _sendShutdownRequest;
     private bool _shutdownRequestSent;
+    private bool _maintenanceWaitingVisible;
 
     private readonly Label _countdownLabel;
+    private readonly MaintenanceSpinner _maintenanceSpinner;
+    private readonly Label _maintenanceElapsedLabel;
     private readonly Label _countdownCaption;
     private readonly Label _statusLabel;
     private readonly Panel _progressTrack;
@@ -141,6 +144,30 @@ internal sealed class WarningForm : Form
         };
 
         card.Controls.Add(_countdownLabel);
+
+        // The expiry of the countdown is not a measurable update progress
+        // percentage. Show an indeterminate spinner instead of a frozen 00:00.
+        _maintenanceSpinner = new MaintenanceSpinner(_palette.Accent)
+        {
+            Location = new Point(264, 160),
+            Size = new Size(52, 52),
+            BackColor = _palette.CardBackground,
+            Visible = false,
+            TabStop = false
+        };
+        card.Controls.Add(_maintenanceSpinner);
+
+        _maintenanceElapsedLabel = new Label
+        {
+            AutoSize = false,
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+            ForeColor = _palette.MutedText,
+            Location = new Point(44, 215),
+            Size = new Size(492, 22),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Visible = false
+        };
+        card.Controls.Add(_maintenanceElapsedLabel);
 
         _progressTrack = new Panel
         {
@@ -320,11 +347,7 @@ internal sealed class WarningForm : Form
                 return;
             }
 
-            _countdownLabel.Text = "00:00";
-            _countdownLabel.ForeColor = _palette.Accent;
-            _progressFill.Width = 1;
-            _countdownCaption.Text = _ui.MaintenanceCountdownCaption;
-            _statusLabel.Text = _ui.MaintenanceStatus;
+            ShowIndeterminateMaintenanceProgress();
 
             if (!_shutdownRequestSent)
             {
@@ -377,6 +400,49 @@ internal sealed class WarningForm : Form
                 _palette.Danger;
 
             _statusLabel.Text = _ui.UrgentStatus;
+        }
+    }
+
+    private void ShowIndeterminateMaintenanceProgress()
+    {
+        if (!_maintenanceWaitingVisible)
+        {
+            _maintenanceWaitingVisible = true;
+            _countdownLabel.Visible = false;
+            _maintenanceSpinner.Visible = true;
+            _maintenanceElapsedLabel.Visible = true;
+
+            _countdownCaption.Text = _ui.MaintenanceActiveCaption;
+            _countdownCaption.ForeColor = _palette.Accent;
+            _countdownCaption.Font = new Font(
+                "Segoe UI", 11F, FontStyle.Bold);
+            _statusLabel.Text = _ui.MaintenanceStatus;
+
+            // This bar is animated, NOT a fabricated Windows Update
+            // percentage. The service controls actual shutdown timing.
+            _progressFill.Width = 110;
+            _progressFill.BackColor = _palette.Accent;
+            // Resize the moving bar's rounded clipping region.
+            _progressFill.Region = CreateRoundedRegion(
+                _progressFill.ClientRectangle, 5);
+        }
+
+        var waitingSeconds = WarningDisplayPolicy.GetMaintenanceWaitingSeconds(
+            _countdown.Elapsed, _warningSeconds);
+
+        _maintenanceElapsedLabel.Text = string.Format(
+            _ui.MaintenanceElapsedCaption,
+            FormatTime(waitingSeconds));
+
+        _maintenanceSpinner.Advance();
+
+        // Continuous indeterminate motion, deliberately independent of
+        // any actual update percentage.
+        var fullTravel = _progressTrack.ClientSize.Width + _progressFill.Width;
+        if (fullTravel > 0)
+        {
+            var position = (int)(_countdown.Elapsed.TotalMilliseconds / 11) % fullTravel;
+            _progressFill.Left = position - _progressFill.Width;
         }
     }
 
@@ -463,6 +529,43 @@ internal sealed class WarningForm : Form
             46F,
             34F);
     }
+    private sealed class MaintenanceSpinner : Control
+    {
+        private readonly Color _accent;
+        private int _angle;
+
+        public MaintenanceSpinner(Color accent)
+        {
+            _accent = accent;
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.UserPaint |
+                     ControlStyles.ResizeRedraw, true);
+        }
+
+        public void Advance()
+        {
+            _angle = (_angle + 16) % 360;
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var pen = new Pen(_accent, 6F)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            e.Graphics.DrawArc(
+                pen,
+                new Rectangle(7, 7, Math.Max(1, Width - 15), Math.Max(1, Height - 15)),
+                _angle,
+                280);
+        }
+    }
+
     private static void ApplyRoundedRegions(
         Panel shell,
         Panel card,

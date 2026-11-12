@@ -1,0 +1,55 @@
+name: Validate waiting-for-updates UI
+
+on:
+  push:
+    branches:
+      - develop/2.0.3-waiting-ui
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Check no misleading maintenance countdown
+        run: |
+          $form = Get-Content 'src/IdleShutdown.Agent/WarningForm.cs' -Raw
+          $strings = Get-Content 'src/IdleShutdown.Agent/UiStrings.cs' -Raw
+          foreach ($required in @(
+            'new MaintenanceSpinner',
+            'ShowIndeterminateMaintenanceProgress()',
+            'MaintenanceElapsedCaption',
+            'MaintenanceActiveCaption',
+            '_maintenanceSpinner.Advance()',
+            'GetMaintenanceWaitingSeconds'
+          )) {
+            if (-not $form.Contains($required)) {
+              throw "Missing indeterminate maintenance UI: $required"
+            }
+          }
+          if ($form.Contains('_countdownLabel.Text = "00:00"')) {
+            throw 'Maintenance UI must not show a permanently frozen 00:00.'
+          }
+          foreach ($required in @(
+            'PROBÍHAJÍ AKTUALIZACE',
+            'UPDATES IN PROGRESS',
+            'UPDATES WERDEN INSTALLIERT',
+            'INSTALANDO ACTUALIZACIONES'
+          )) {
+            if (-not $strings.Contains($required)) {
+              throw "Missing translated maintenance status: $required"
+            }
+          }
+      - name: Run logic regression tests
+        run: dotnet run --project tests/IdleShutdown.LogicTests/IdleShutdown.LogicTests.csproj -c Release
+      - name: Compile Windows Forms agent
+        run: dotnet build src/IdleShutdown.Agent/IdleShutdown.Agent.csproj -c Release -r win-x64
