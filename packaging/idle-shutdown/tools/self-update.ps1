@@ -7,6 +7,7 @@ $configPath = Join-Path $dataDir 'config.json'
 $selfLockPath = Join-Path $dataDir 'selfupdate.lock'
 $maintenanceLockPath = Join-Path $dataDir 'maintenance.lock'
 $logPath = Join-Path $dataDir 'SelfUpdate.log'
+$script:UpgradeVerificationFailed = $false
 
 # Same retention policy as the primary service log:
 # 2 MiB active file, .1 and .2 archives (about 6 MiB total).
@@ -365,11 +366,17 @@ try {
         Write-SelfUpdateLog ("INCOMPLETE: choco=$installed; agent=$agent; service=$service; " +
             "config=$configVersion; task=$helper; target=$targetVersion; exitCode=$upgradeExit. " +
             'Retry at next unattended start; inspect Chocolatey log for errors.')
+        $script:UpgradeVerificationFailed = $true
     }
 }
 catch {
     Write-SelfUpdateLog ('Self-upgrade failed safely: ' + $_.Exception.Message)
+    $script:UpgradeVerificationFailed = $true
 }
 finally {
     if ($selfLock) { $selfLock.Dispose() }
+}
+if ($script:UpgradeVerificationFailed) {
+    # Nonzero task result when the reported upgrade did not fully install.
+    exit 1
 }
