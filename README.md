@@ -31,7 +31,7 @@ Výchozí produkční konfigurace:
 
 ```json
 {
-  "ConfigVersion": "2.0.5",
+  "ConfigVersion": "2.0.7",
   "IdleMinutes": 90,
   "WarningSeconds": 300,
   "CheckIntervalSeconds": 5,

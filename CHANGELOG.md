@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.7
+
+- Testovací stabilní vydání pro ověření automatické aktualizace **2.0.6 → 2.0.7** po startu Windows, i při přihlášení přes RDP.
+- **Bez funkčních změn** oproti 2.0.6; mění se pouze verze aplikace a `ConfigVersion`. Zůstává zachovaný stable-only updater i všechny bezpečnostní ochrany.
+
 ## 2.0.6
 
 - Opravuje situaci, kdy rychlé přihlášení přes RDP po restartu vedlo k neustálému přeskočení samoaktualizace.
