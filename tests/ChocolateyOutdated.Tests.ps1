@@ -64,7 +64,7 @@ foreach ($required in $expectedArgs) {
 if ($actual[0].Extent.Text.Contains("'idle-shutdown'")) {
     throw 'choco outdated does NOT accept a package name positional argument.'
 }
-if (-not $content.Contains("if ($source) { $queryArgs += @('--source', $source) }")) {
+if (-not $content.Contains('if ($source) { $queryArgs += @(''--source'', $source) }')) {
     throw 'Custom ChocolateySource must be honored.'
 }
 if ($content.Contains('$queryArgs += ''--pre''') -or
