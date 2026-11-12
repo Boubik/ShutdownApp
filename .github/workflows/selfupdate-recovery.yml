@@ -1,0 +1,28 @@
+name: Self-update recovery validation
+
+on:
+  push:
+    branches:
+      - develop/2.0.4-selfupdate-recovery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Test interrupted-upgrade recovery logic on Windows
+        run: ./tests/SelfUpdateRecovery.Tests.ps1
+      - name: Run service and agent regression tests
+        run: dotnet run --project tests/IdleShutdown.LogicTests/IdleShutdown.LogicTests.csproj -c Release
+      - name: Compile updater and service artifacts
+        run: dotnet build IdleShutdown.sln -c Release
